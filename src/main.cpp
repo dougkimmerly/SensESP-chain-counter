@@ -1,125 +1,160 @@
-#include <Arduino.h>
-#include <sensesp.h>
+#include "sensesp/sensors/digital_input.h"
+#include "sensesp/signalk/signalk_output.h"
+#include "sensesp/system/lambda_consumer.h"
+#include "sensesp/transforms/debounce.h"
+#include "sensesp/transforms/integrator.h"
+#include "sensesp_app.h"
 #include "sensesp_app_builder.h"
-#include <sensesp/signalk/signalk_output.h>
-#include <sensesp/transforms/linear.h>
-#include <sensesp/transforms/lambda_transform.h>
-#include <sensesp/sensors/digital_input.h>
-#include <Preferences.h>  // Pour la persistance des données
 
 using namespace sensesp;
 
-const uint8_t PIN_IMPULSION = 18;
-const uint8_t PIN_MONTER = 19;
-const uint8_t PIN_DESCENDRE = 21;
-const uint8_t PIN_RESET = 22;  // Pin du bouton de remise à zéro
-const float LONGUEUR_PAR_IMPULSION_M = 0.168; // 6 maillons × 28 mm
+#define GPIO_HALMET_DI1 23
+#define GPIO_HALMET_DI2 25
+#define GPIO_HALMET_DI3 27
+#define GPIO_HALMET_DI4 26
 
-Preferences prefs;  // Instance de Preferences pour la persistance
-
-int impulsions = 0;
-String sens = "stopped";
-unsigned long t_last_monter_off = 0;
-float longueur_cumulee = 0.0;
-
-reactesp::ReactESP app;
+/**
+ * This example illustrates an anchor chain counter. Note that it
+ * doesn't distinguish between chain being let out and chain being
+ * taken in, so the intended usage is this: Press the button to make
+ * sure the counter is at 0.0. Let out chain until the counter shows
+ * the amount you want out. Once the anchor is set, press the button
+ * again to reset the counter to 0.0. As you bring the chain in, the
+ * counter will show how much you have brought in. Press the button
+ * again to reset the counter to 0.0, to be ready for the next anchor
+ * deployment.
+ *
+ * A bi-directional chain counter is possible, but this is not one.
+ */
 
 void setup() {
-  Serial.begin(115200);
+  SetupLogging();
+
   SensESPAppBuilder builder;
-  sensesp_app = (&builder)
-    ->set_hostname("guindeau")
-    ->set_wifi("TON_SSID", "TON_MOT_DE_PASSE")
-    ->set_sk_server("192.168.1.100", 3000)  // Adresse du serveur Signal K
-    ->get_app();
+  sensesp_app = builder.set_hostname("ChainCounter")
+                    ->get_app();
 
-  // Ouverture de la mémoire pour lire la longueur précédente
-  prefs.begin("guindeau", false);
-  longueur_cumulee = prefs.getFloat("longueur", 0.0);  // Récupère la longueur sauvegardée
+  uint8_t COUNTER_PIN = GPIO_HALMET_DI3;
+  uint8_t BUTTON_PIN = GPIO_HALMET_DI4;
 
-  // Capteur d’impulsions
-  auto impulsion_input = new DigitalInputCounter(PIN_IMPULSION, INPUT_PULLUP, RISING, 100);
+  /**
+   * DigitalInputCounter will count the revolutions of the windlass with a
+   * Hall Effect Sensor connected to COUNTER_PIN. It will output its count
+   * every counter_read_delay ms, which can be configured in the Config UI at
+   * counter_config_path.
+   */
+  unsigned int counter_read_delay = 1000;
+  String counter_config_path = "/chain_counter/read_delay";
+  auto* chain_counter =
+      new DigitalInputCounter(COUNTER_PIN, INPUT_PULLUP, RISING,
+                              counter_read_delay, counter_config_path);
 
-  // Entrées relais
-  pinMode(PIN_MONTER, INPUT_PULLUP);
-  pinMode(PIN_DESCENDRE, INPUT_PULLUP);
-  pinMode(PIN_RESET, INPUT_PULLUP);  // Initialisation du bouton de remise à zéro
+  /**
+   * An Integrator<int, float> called "accumulator" adds up all the counts it
+   * receives (which are ints) and multiplies each count by gypsy_circum, which
+   * is the amount of chain, in meters, that is moved by each revolution of the
+   * windlass. (Since gypsy_circum is a float, the output of this transform must
+   * be a float, which is why we use Integrator<int, float>). It can be
+   * configured in the Config UI at accum_config_path.
+   */
+  float gypsy_circum = 0.32;
+  String accum_config_path = "/accumulator/circum";
+  auto* accumulator =
+      new Integrator<int, float>(gypsy_circum, 0.0, accum_config_path);
 
-  // Détermination du sens de rotation
-  auto direction_sensor = new LambdaTransform<int, String>(
-    [](int dummy) {
-      bool monter = digitalRead(PIN_MONTER);
-      bool descendre = digitalRead(PIN_DESCENDRE);
-      unsigned long now = millis();
-      String s;
+  /**
+   * There is no path for the amount of anchor rode deployed in the current
+   * Signal K specification. By creating an instance of SKMetaData, we can send
+   * a partial or full defintion of the metadata that other consumers of Signal
+   * K data might find useful. (For example, Instrument Panel will benefit from
+   * knowing the units to be displayed.) The metadata is sent only the first
+   * time the data value is sent to the server.
+   */
+  SKMetadata* metadata = new SKMetadata();
+  metadata->units_ = "m";
+  metadata->description_ = "Anchor Rode Deployed";
+  metadata->display_name_ = "Rode Deployed";
+  metadata->short_name_ = "Rode Out";
 
-      if (monter) {
-        t_last_monter_off = now;
-        s = "up";
-      } else if (descendre) {
-        s = "down";
-      } else {
-        // Ni montée ni descente active
-        if (now - t_last_monter_off < 3000) {
-          s = "up";  // Inertie de montée
-        } else {
-          s = "down";  // Descente libre
-        }
+  /**
+   * chain_counter is connected to accumulator, which is connected to an
+   * SKOutputNumber, which sends the final result to the indicated path on the
+   * Signal K server. (Note that each data type has its own version of SKOutput:
+   * SKOutputNumber for floats, SKOutputInt, SKOutputBool, and SKOutputString.)
+   */
+  String sk_path = "navigation.anchor.rodeDeployed";
+  String sk_path_config_path = "/rodeDeployed/sk";
+
+  chain_counter->connect_to(accumulator)
+      ->connect_to(new SKOutputFloat(sk_path, sk_path_config_path, metadata));
+
+  /**
+   * DigitalInputChange monitors a physical button connected to BUTTON_PIN.
+   * Because its interrupt type is CHANGE, it will emit a value when the button
+   * is pressed, and again when it's released, but that's OK - our
+   * LambdaConsumer function will act only on the press, and ignore the release.
+   * DigitalInputChange looks for a change every read_delay ms, which can be
+   * configured at read_delay_config_path in the Config UI.
+   */
+  int read_delay = 10;
+  String read_delay_config_path = "/button_watcher/read_delay";
+  auto* button_watcher = new DigitalInputChange(BUTTON_PIN, INPUT, read_delay,
+                                                read_delay_config_path);
+
+  /**
+   * Create a DebounceInt to make sure we get a nice, clean signal from the
+   * button. Set the debounce delay period to 15 ms, which can be configured at
+   * debounce_config_path in the Config UI.
+   */
+  int debounce_delay = 15;
+  String debounce_config_path = "/debounce/delay";
+  auto* debounce = new DebounceInt(debounce_delay, debounce_config_path);
+
+  ConfigItem(debounce)
+      ->set_title("Button Debounce")
+      ->set_description("Button debounce delay")
+      ->set_sort_order(1000);
+
+  /**
+   * When the button is pressed (or released), it will call the lambda
+   * expression (or "function") that's called by the LambdaConsumer. This is the
+   * function - notice that it calls reset() only when the input is 1, which
+   * indicates a button press. It ignores the button release. If your button
+   * goes to GND when pressed, make it "if (input == 0)".
+   */
+  auto reset_function = [accumulator](int input) {
+    if (input == 1) {
+      accumulator->reset();  // Resets the output to 0.0
+    }
+  };
+
+  /**
+   * Create the LambdaConsumer that calls reset_function, Because
+   DigitalInputChange
+   * outputs an int, the version of LambdaConsumer we need is
+   LambdaConsumer<int>.
+   *
+   * While this approach - defining the lambda function (above) separate from
+   the
+   * LambdaConsumer (below) - is simpler to understand, there is a more concise
+   approach:
+   *
+    auto* button_consumer = new LambdaConsumer<int>([accumulator](int input) {
+      if (input == 1) {
+        accumulator->reset();
       }
-      sens = s;
-      return s;
-    },
-    "Sens de rotation"
-  );
+    });
 
-  // Transformation impulsions → mètres
-  auto longueur_output = new Linear(LONGUEUR_PAR_IMPULSION_M, 0.0);
+   *
+  */
+  auto* button_consumer = new LambdaConsumer<int>(reset_function);
 
-  // Relier la longueur à Signal K
-  impulsion_input->connect_to(longueur_output)
-                 ->connect_to(new SKOutputFloat("propulsion.anchorChain.length"));
-
-  // Sauvegarder la longueur dans Preferences toutes les 10 secondes
-  app.onRepeat(10000, []() {
-    prefs.putFloat("longueur", longueur_cumulee);  // Sauvegarder la longueur actuelle
-    Serial.print("Longueur sauvegardée : ");
-    Serial.println(longueur_cumulee);
-  });
-
-  // Publier le sens dans Signal K chaque seconde
-  app.onRepeat(1000, []() {
-    static String last_sent = "";
-    if (sens != last_sent) {
-      auto sens_output = new SKOutputString("propulsion.anchorChain.direction");
-      sens_output->set_input(sens);
-      last_sent = sens;
-    }
-  });
-
-  // Gérer la remise à zéro de la longueur
-  app.onRepeat(100, []() {
-    static unsigned long last_reset_time = 0;
-    if (digitalRead(PIN_RESET) == LOW && millis() - last_reset_time > 500) {  // Délai anti-rebond
-      // Réinitialiser la longueur
-      longueur_cumulee = 0.0;
-      prefs.putFloat("longueur", 0.0);  // Sauvegarder la longueur réinitialisée
-      Serial.println("Longueur réinitialisée à 0.");
-      last_reset_time = millis();  // Mettre à jour le temps pour éviter les réinitialisations multiples
-    }
-  });
-
-  sensesp_app->start();
+  /* Connect the button_watcher to the debounce to the button_consumer. */
+  button_watcher->connect_to(debounce)->connect_to(button_consumer);
 }
 
+// The loop function is called in an endless loop during program execution.
+// It simply calls `app.tick()` which will then execute all events needed.
 void loop() {
-  app.tick();
-}
-
-// Fonction pour mettre à jour la longueur en fonction du sens
-void updateLength(String direction) {
-  if (direction == "up") {
-    longueur_cumulee -= LONGUEUR_PAR_IMPULSION_M;  // Décrémenter la longueur en montée
-  } else if (direction == "down") {
-    longueur_cumulee += LONGUEUR_PAR_IMPULSION_M;  // Incrémenter la longueur en descente
-  }
+  event_loop()->tick();
 }
