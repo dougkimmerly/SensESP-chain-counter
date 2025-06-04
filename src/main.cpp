@@ -3,8 +3,10 @@
 #include "sensesp/system/lambda_consumer.h"
 #include "sensesp/transforms/debounce.h"
 #include "sensesp/transforms/integrator.h"
+#include "sensesp/sensors/sensor.h"
 #include "sensesp_app.h"
 #include "sensesp_app_builder.h"
+#include <Preferences.h>
 
 using namespace sensesp;
 
@@ -12,6 +14,14 @@ using namespace sensesp;
 #define GPIO_HALMET_DI2 25
 #define GPIO_HALMET_DI3 27
 #define GPIO_HALMET_DI4 26
+
+const uint8_t UP_PIN =      GPIO_HALMET_DI1;
+const uint8_t DOWN_PIN =    GPIO_HALMET_DI2;
+const uint8_t COUNTER_PIN = GPIO_HALMET_DI3;
+const uint8_t BUTTON_PIN =  GPIO_HALMET_DI4;
+const float gypsy_circum = 1.0;
+
+Preferences prefs;
 
 /**
  * This example illustrates an anchor chain counter. Note that it
@@ -34,10 +44,6 @@ void setup() {
   sensesp_app = builder.set_hostname("ChainCounter")
                     ->get_app();
 
-  uint8_t UP_PIN =      GPIO_HALMET_DI1;
-  uint8_t DOWN_PIN =    GPIO_HALMET_DI2;
-  uint8_t COUNTER_PIN = GPIO_HALMET_DI3;
-  uint8_t BUTTON_PIN =  GPIO_HALMET_DI4;
 
   /**
    * DigitalInputCounter will count the revolutions of the windlass with a
@@ -59,10 +65,14 @@ void setup() {
    * be a float, which is why we use Integrator<int, float>). It can be
    * configured in the Config UI at accum_config_path.
    */
-  float gypsy_circum = 1.0;
+  prefs.begin("chain", true);  // true = lecture seule
+  float saved_length = prefs.getFloat("length", 0.0);
+  prefs.end();
+
+
   String accum_config_path = "/accumulator/circum";
   auto* accumulator =
-      new Integrator<int, float>(gypsy_circum, 0.0, accum_config_path);
+      new Integrator<int, float>(gypsy_circum, saved_length, accum_config_path);
 
   /**
    * There is no path for the amount of anchor rode deployed in the current
@@ -117,6 +127,22 @@ void setup() {
       ->set_description("Button debounce delay")
       ->set_sort_order(1000);
 
+  /* Save the chain length function */
+  auto save_chain_length = [accumulator]() {
+    float current_length = accumulator->get();
+    Preferences prefs;
+    prefs.begin("chain", false);  // false = écriture
+    prefs.putFloat("length", current_length);
+    prefs.end();
+    ESP_LOGI(__FILE__, "Longueur de %f sauvegardée.", current_length);
+  };
+
+  /* Save chain length every 5 seconds */
+  auto* save_timer = new RepeatSensor<bool>(5000, [accumulator, save_chain_length]() -> bool {
+    save_chain_length();
+    return true;
+  });
+
   /**
    * When the button is pressed (or released), it will call the lambda
    * expression (or "function") that's called by the LambdaConsumer. This is the
@@ -124,10 +150,11 @@ void setup() {
    * indicates a button press. It ignores the button release. If your button
    * goes to GND when pressed, make it "if (input == 0)".
    */
-  auto reset_function = [accumulator](int input) {
-    ESP_LOGI(__FILE__, "Reset button pressed");
+  auto reset_function = [accumulator, save_chain_length](int input) {
     if (input == 1) {
-      accumulator->reset();  // Resets the output to 0.0
+      accumulator->reset();
+      ESP_LOGI(__FILE__, "Longueur réinitialisée à 0");
+      save_chain_length();
     }
   };
 
@@ -136,19 +163,6 @@ void setup() {
    DigitalInputChange
    * outputs an int, the version of LambdaConsumer we need is
    LambdaConsumer<int>.
-   *
-   * While this approach - defining the lambda function (above) separate from
-   the
-   * LambdaConsumer (below) - is simpler to understand, there is a more concise
-   approach:
-   *
-    auto* button_consumer = new LambdaConsumer<int>([accumulator](int input) {
-      if (input == 1) {
-        accumulator->reset();
-      }
-    });
-
-   *
   */
   auto* button_consumer = new LambdaConsumer<int>(reset_function);
 
