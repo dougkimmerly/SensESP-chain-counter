@@ -2,7 +2,8 @@
 #include "sensesp/signalk/signalk_output.h"
 #include "sensesp/system/lambda_consumer.h"
 #include "sensesp/transforms/debounce.h"
-#include "sensesp/transforms/integrator.h"
+#include "sensesp/transforms/linear.h"
+#include "sensesp/system/lambda_consumer.h"
 #include "sensesp/sensors/sensor.h"
 #include "sensesp_app.h"
 #include "sensesp_app_builder.h"
@@ -19,7 +20,9 @@ const uint8_t UP_PIN =      GPIO_HALMET_DI1;
 const uint8_t DOWN_PIN =    GPIO_HALMET_DI2;
 const uint8_t COUNTER_PIN = GPIO_HALMET_DI3;
 const uint8_t BUTTON_PIN =  GPIO_HALMET_DI4;
-const float gypsy_circum = 1.0;
+const float gypsy_circum = 0.25;
+
+bool up = false;
 
 Preferences prefs;
 
@@ -44,18 +47,9 @@ void setup() {
   sensesp_app = builder.set_hostname("ChainCounter")
                     ->get_app();
 
-
-  /**
-   * DigitalInputCounter will count the revolutions of the windlass with a
-   * Hall Effect Sensor connected to COUNTER_PIN. It will output its count
-   * every counter_read_delay ms, which can be configured in the Config UI at
-   * counter_config_path.
-   */
-  unsigned int counter_read_delay = 1000;
-  String counter_config_path = "/chain_counter/read_delay";
-  auto* chain_counter =
-      new DigitalInputCounter(COUNTER_PIN, INPUT_PULLUP, RISING,
-                              counter_read_delay, counter_config_path);
+  prefs.begin("chain", true);  // true = lecture seule
+  float saved_length = prefs.getFloat("length", 0.0);
+  prefs.end();
 
   /**
    * An Integrator<int, float> called "accumulator" adds up all the counts it
@@ -65,14 +59,24 @@ void setup() {
    * be a float, which is why we use Integrator<int, float>). It can be
    * configured in the Config UI at accum_config_path.
    */
-  prefs.begin("chain", true);  // true = lecture seule
-  float saved_length = prefs.getFloat("length", 0.0);
-  prefs.end();
-
-
   String accum_config_path = "/accumulator/circum";
   auto* accumulator =
-      new Integrator<int, float>(gypsy_circum, saved_length, accum_config_path);
+      new Integrator<float, float>(gypsy_circum, saved_length, accum_config_path);
+
+  ConfigItem(accumulator)
+      ->set_title("Gypsy circum")
+      ->set_description("Gypsy circum in m")
+      ->set_sort_order(1000);
+
+  /* Save the chain length function */
+  auto save_chain_length = [accumulator]() {
+    float current_length = accumulator->get();
+    ESP_LOGI(__FILE__, "Longueur de %f sauvegardée.", current_length);
+    Preferences prefs;
+    prefs.begin("chain", false);  // false = écriture
+    prefs.putFloat("length", current_length);
+    prefs.end();
+  };
 
   /**
    * There is no path for the amount of anchor rode deployed in the current
@@ -96,9 +100,66 @@ void setup() {
    */
   String sk_path = "navigation.anchor.rodeDeployed";
   String sk_path_config_path = "/rodeDeployed/sk";
+  auto sk_output = new SKOutputFloat(sk_path, sk_path_config_path, metadata);
+  accumulator->connect_to(sk_output);
 
-  chain_counter->connect_to(accumulator)
-      ->connect_to(new SKOutputFloat(sk_path, sk_path_config_path, metadata));
+  auto* sk_timer = new RepeatSensor<bool>(1000, [accumulator] () -> bool {
+    accumulator->notify();
+    return true;
+  });
+
+
+
+// Détection UP_PIN (avec debounce)
+auto* up_input = new DigitalInputChange(UP_PIN, INPUT_PULLUP, CHANGE, "/up/read_delay");
+auto* up_debounce = new DebounceInt(15, "/up/debounce");
+auto* up_handler = new LambdaConsumer<int>( [](int input) {
+  ESP_LOGI(__FILE__, "Bouton UP Changes");
+  if (input == 1) {
+    ESP_LOGI(__FILE__, "Bouton UP ON => Up");
+    up =true;
+  } else {
+    ESP_LOGI(__FILE__, "Bouton UP OFF => Down");
+    up = false;
+  }
+});
+up_input->connect_to(up_debounce)->connect_to(up_handler);
+
+// Détection DOWN_PIN (avec debounce)
+auto* down_input = new DigitalInputChange(DOWN_PIN, INPUT, CHANGE, "/down/read_delay");
+auto* down_debounce = new DebounceInt(15, "/down/debounce");
+auto* down_handler = new LambdaConsumer<int>( [](int input) {
+  if (input == 1) {
+    ESP_LOGI(__FILE__, "Bouton Down Rise => Down");
+    up = false;
+  }
+});
+down_input->connect_to(down_debounce)->connect_to(down_handler);
+
+// Détection COUNTER_PIN (avec debounce)
+auto* counter_input = new DigitalInputChange(COUNTER_PIN, INPUT, CHANGE, "/counter/read_delay");
+auto* counter_debounce = new DebounceInt(15, "/counter/debounce");
+
+
+auto* counter_handler = new LambdaConsumer<int>( [save_chain_length, accumulator](int input) {
+  if (input == 1) {
+  ESP_LOGI(__FILE__, "Bouton Counter Rise");
+  
+  if (up) {
+    accumulator->set(-1);
+    //chain_length = chain_length - gypsy_circum;
+    ESP_LOGI(__FILE__, "Décrémenté");
+  } else {
+    accumulator->set(1);
+    //accumulator->notify();
+    //chain_length = chain_length + gypsy_circum;
+    ESP_LOGI(__FILE__, "Incrémenté");
+  }
+  save_chain_length();
+  }
+});
+counter_input->connect_to(counter_debounce)->connect_to(counter_handler);
+
 
   /**
    * DigitalInputChange monitors a physical button connected to BUTTON_PIN.
@@ -108,9 +169,8 @@ void setup() {
    * DigitalInputChange looks for a change every read_delay ms, which can be
    * configured at read_delay_config_path in the Config UI.
    */
-  int read_delay = 10;
   String read_delay_config_path = "/button_watcher/read_delay";
-  auto* button_watcher = new DigitalInputChange(BUTTON_PIN, INPUT, CHANGE,
+  auto* button_watcher = new DigitalInputChange(BUTTON_PIN, INPUT_PULLUP, CHANGE,
                                                 read_delay_config_path);
 
   /**
@@ -122,27 +182,6 @@ void setup() {
   String debounce_config_path = "/debounce/delay";
   auto* debounce = new DebounceInt(debounce_delay, debounce_config_path);
 
-  ConfigItem(debounce)
-      ->set_title("Button Debounce")
-      ->set_description("Button debounce delay")
-      ->set_sort_order(1000);
-
-  /* Save the chain length function */
-  auto save_chain_length = [accumulator]() {
-    float current_length = accumulator->get();
-    Preferences prefs;
-    prefs.begin("chain", false);  // false = écriture
-    prefs.putFloat("length", current_length);
-    prefs.end();
-    ESP_LOGI(__FILE__, "Longueur de %f sauvegardée.", current_length);
-  };
-
-  /* Save chain length every 5 seconds */
-  auto* save_timer = new RepeatSensor<bool>(5000, [accumulator, save_chain_length]() -> bool {
-    save_chain_length();
-    return true;
-  });
-
   /**
    * When the button is pressed (or released), it will call the lambda
    * expression (or "function") that's called by the LambdaConsumer. This is the
@@ -153,6 +192,7 @@ void setup() {
   auto reset_function = [accumulator, save_chain_length](int input) {
     if (input == 1) {
       accumulator->reset();
+      accumulator->set(0);
       ESP_LOGI(__FILE__, "Longueur réinitialisée à 0");
       save_chain_length();
     }
