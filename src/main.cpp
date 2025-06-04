@@ -34,8 +34,10 @@ void setup() {
   sensesp_app = builder.set_hostname("ChainCounter")
                     ->get_app();
 
+  uint8_t UP_PIN =      GPIO_HALMET_DI1;
+  uint8_t DOWN_PIN =    GPIO_HALMET_DI2;
   uint8_t COUNTER_PIN = GPIO_HALMET_DI3;
-  uint8_t BUTTON_PIN = GPIO_HALMET_DI4;
+  uint8_t BUTTON_PIN =  GPIO_HALMET_DI4;
 
   /**
    * DigitalInputCounter will count the revolutions of the windlass with a
@@ -57,7 +59,7 @@ void setup() {
    * be a float, which is why we use Integrator<int, float>). It can be
    * configured in the Config UI at accum_config_path.
    */
-  float gypsy_circum = 0.32;
+  float gypsy_circum = 1.0;
   String accum_config_path = "/accumulator/circum";
   auto* accumulator =
       new Integrator<int, float>(gypsy_circum, 0.0, accum_config_path);
@@ -98,7 +100,7 @@ void setup() {
    */
   int read_delay = 10;
   String read_delay_config_path = "/button_watcher/read_delay";
-  auto* button_watcher = new DigitalInputChange(BUTTON_PIN, INPUT, read_delay,
+  auto* button_watcher = new DigitalInputChange(BUTTON_PIN, INPUT, CHANGE,
                                                 read_delay_config_path);
 
   /**
@@ -123,6 +125,7 @@ void setup() {
    * goes to GND when pressed, make it "if (input == 0)".
    */
   auto reset_function = [accumulator](int input) {
+    ESP_LOGI(__FILE__, "Reset button pressed");
     if (input == 1) {
       accumulator->reset();  // Resets the output to 0.0
     }
