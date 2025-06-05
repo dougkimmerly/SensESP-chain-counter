@@ -17,9 +17,6 @@ const int GPIO_DI3 = 27; //DIGITAL 3 in HALMET for CCOUNTER
 const int GPIO_DI4 = 26; //DIGITAL 4 in HALMET for RESET button
 const float gypsy_circum = 0.25;
 
-// Global var to specify diretion
-bool up = false;
-
 /**
  * This example illustrates an anchor chain counter. Note that it
  * doesn't distinguish between chain being let out and chain being
@@ -75,6 +72,11 @@ void setup() {
       ->set_description("Gypsy circum in m")
       ->set_sort_order(1000);
 
+  /* Observable direction ("up", "down" or "free fall") */
+  auto* direction = new ObservableValue<String>("free_fall");
+  direction->connect_to(
+    new SKOutputString("navigation.anchor.chainDirection", "/chain/direction") );
+
   /**
    * There is no path for the amount of anchor rode deployed in the current
    * Signal K specification. By creating an instance of SKMetaData, we can send
@@ -101,8 +103,9 @@ void setup() {
   accumulator->connect_to(sk_output);
 
   /* Publish sk data every seconds */
-  auto* sk_timer = new RepeatSensor<bool>(1000, [accumulator] () -> bool {
+  auto* sk_timer = new RepeatSensor<bool>(1000, [direction, accumulator] () -> bool {
     accumulator->notify();
+    direction->notify();
     return true;
   });
 
@@ -117,39 +120,42 @@ void setup() {
   };
 
   /* Up pin */
-  auto* up_handler = new LambdaConsumer<int>( [](int input) {
+  auto* up_handler = new LambdaConsumer<int>( [direction](int input) {
     ESP_LOGI(__FILE__, "Bouton UP Changes");
     if (input == 1) {
       ESP_LOGI(__FILE__, "Bouton UP ON => Up");
-      up =true;
+      direction->set("up");
     } else {
-      ESP_LOGI(__FILE__, "Bouton UP OFF => Down");
-      up = false;
+      ESP_LOGI(__FILE__, "Bouton UP OFF => Free fall");
+      direction->set("free fall");
     }
   });
   di1_input->connect_to(di1_debounce)->connect_to(up_handler);
 
   /* Détection DOWN_PIN (avec debounce) */
-  auto* down_handler = new LambdaConsumer<int>( [](int input) {
+  auto* down_handler = new LambdaConsumer<int>( [direction](int input) {
     if (input == 1) {
       ESP_LOGI(__FILE__, "Bouton Down Rise => Down");
-      up = false;
+      direction->set("down");
+    } else {
+      ESP_LOGI(__FILE__, "Bouton UP OFF => Free fall");
+      direction->set("free fall");
     }
   });
   di2_input->connect_to(di2_debounce)->connect_to(down_handler);
 
   /* Détection COUNTER_PIN (avec debounce) */
-  auto* counter_handler = new LambdaConsumer<int>( [save_chain_length, accumulator](int input) {
+  auto* counter_handler = new LambdaConsumer<int>( [direction, save_chain_length, accumulator](int input) {
     if (input == 1) {
-    ESP_LOGI(__FILE__, "Bouton Counter Rise");
-    if (up) {
-      accumulator->set(-1);
-      ESP_LOGI(__FILE__, "Décrémenté");
-    } else {
-      accumulator->set(1);
-      ESP_LOGI(__FILE__, "Incrémenté");
-    }
-    save_chain_length();
+      ESP_LOGI(__FILE__, "Bouton Counter Rise");
+      if (direction->get() == "up") {
+        accumulator->set(-1);
+        ESP_LOGI(__FILE__, "Décrémenté");
+      } else {
+        accumulator->set(1);
+        ESP_LOGI(__FILE__, "Incrémenté");
+      }
+      save_chain_length();
     }
   });
   di3_input->connect_to(di3_debounce)->connect_to(counter_handler);
