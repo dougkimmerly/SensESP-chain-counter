@@ -10,12 +10,13 @@
 
 using namespace sensesp;
 
-// Define GPIOs
+/* Define GPIOs */
 const int GPIO_DI1 = 23; //DIGITAL 1 in HALMET for UP relay
 const int GPIO_DI2 = 25; //DIGITAL 2 in HALMET for DOWN relay
 const int GPIO_DI3 = 27; //DIGITAL 3 in HALMET for CCOUNTER
 const int GPIO_DI4 = 26; //DIGITAL 4 in HALMET for RESET button
 const float gypsy_circum = 0.25;
+static reactesp::Event* delayptr = nullptr;
 
 /**
  * This example illustrates an anchor chain counter. Note that it
@@ -120,26 +121,40 @@ void setup() {
   };
 
   /* Up pin */
-  auto* up_handler = new LambdaConsumer<int>( [direction](int input) {
+  auto* up_handler = new LambdaConsumer<int>( [delayptr, direction](int input) {
     ESP_LOGI(__FILE__, "Bouton UP Changes");
+    if (delayptr != nullptr) { 
+      event_loop()->remove(delayptr);
+      delayptr=nullptr;
+    }
     if (input == 1) {
       ESP_LOGI(__FILE__, "Bouton UP ON => Up");
       direction->set("up");
     } else {
       ESP_LOGI(__FILE__, "Bouton UP OFF => Free fall");
-      direction->set("free fall");
+      delayptr = event_loop()->onDelay(2000, [delayptr, direction]() {
+        direction->set("free fall");
+        delayptr=nullptr;
+      });
     }
   });
   di1_input->connect_to(di1_debounce)->connect_to(up_handler);
 
   /* Détection DOWN_PIN (avec debounce) */
-  auto* down_handler = new LambdaConsumer<int>( [direction](int input) {
+  auto* down_handler = new LambdaConsumer<int>( [delayptr, direction](int input) {
+    if (delayptr != nullptr) { 
+      event_loop()->remove(delayptr);
+      delayptr=nullptr;
+    }
     if (input == 1) {
-      ESP_LOGI(__FILE__, "Bouton Down Rise => Down");
+      ESP_LOGI(__FILE__, "Bouton DOWN ON => Down");
       direction->set("down");
     } else {
-      ESP_LOGI(__FILE__, "Bouton UP OFF => Free fall");
-      direction->set("free fall");
+      ESP_LOGI(__FILE__, "Bouton DOWN OFF => Free fall");
+      delayptr = event_loop()->onDelay(2000, [delayptr, direction]() {
+        direction->set("free fall");
+        delayptr=nullptr;
+      });
     }
   });
   di2_input->connect_to(di2_debounce)->connect_to(down_handler);
@@ -178,8 +193,8 @@ void setup() {
   di4_input->connect_to(di4_debounce)->connect_to(reset_handler);
 }
 
-// The loop function is called in an endless loop during program execution.
-// It simply calls `app.tick()` which will then execute all events needed.
+/* The loop function is called in an endless loop during program execution.
+   It simply calls `app.tick()` which will then execute all events needed. */
 void loop() {
   event_loop()->tick();
 }
