@@ -3,7 +3,6 @@
 #include "sensesp/system/lambda_consumer.h"
 #include "sensesp/transforms/debounce.h"
 #include "sensesp/transforms/linear.h"
-#include "sensesp/system/lambda_consumer.h"
 #include "sensesp/sensors/sensor.h"
 #include "sensesp_app.h"
 #include "sensesp_app_builder.h"
@@ -11,20 +10,15 @@
 
 using namespace sensesp;
 
-#define GPIO_HALMET_DI1 23
-#define GPIO_HALMET_DI2 25
-#define GPIO_HALMET_DI3 27
-#define GPIO_HALMET_DI4 26
-
-const uint8_t UP_PIN =      GPIO_HALMET_DI1;
-const uint8_t DOWN_PIN =    GPIO_HALMET_DI2;
-const uint8_t COUNTER_PIN = GPIO_HALMET_DI3;
-const uint8_t BUTTON_PIN =  GPIO_HALMET_DI4;
+// Define GPIOs
+const int GPIO_DI1 = 23; //DIGITAL 1 in HALMET for UP relay
+const int GPIO_DI2 = 25; //DIGITAL 2 in HALMET for DOWN relay
+const int GPIO_DI3 = 27; //DIGITAL 3 in HALMET for CCOUNTER
+const int GPIO_DI4 = 26; //DIGITAL 4 in HALMET for RESET button
 const float gypsy_circum = 0.25;
 
+// Global var to specify diretion
 bool up = false;
-
-Preferences prefs;
 
 /**
  * This example illustrates an anchor chain counter. Note that it
@@ -41,15 +35,27 @@ Preferences prefs;
  */
 
 void setup() {
+  /* Prepare application */
   SetupLogging();
-
   SensESPAppBuilder builder;
   sensesp_app = builder.set_hostname("ChainCounter")
                     ->get_app();
 
+  /* Get last saved chain length from disk */
+  Preferences prefs;
   prefs.begin("chain", true);  // true = lecture seule
   float saved_length = prefs.getFloat("length", 0.0);
   prefs.end();
+
+  /* Digital inputs */
+  auto* di1_input = new DigitalInputChange(GPIO_DI1, INPUT_PULLUP, CHANGE, "/di1/digital_input");
+  auto* di1_debounce = new DebounceInt(15, "/di1/debounce");
+  auto* di2_input = new DigitalInputChange(GPIO_DI2, INPUT_PULLUP, CHANGE, "/di2/digital_input");
+  auto* di2_debounce = new DebounceInt(15, "/di2/debounce");
+  auto* di3_input = new DigitalInputChange(GPIO_DI3, INPUT_PULLUP, CHANGE, "/di3/digital_input");
+  auto* di3_debounce = new DebounceInt(15, "/di3/debounce");
+  auto* di4_input = new DigitalInputChange(GPIO_DI4, INPUT_PULLUP, CHANGE, "/di4/digital_input");
+  auto* di4_debounce = new DebounceInt(15, "/di4/debounce");
 
   /**
    * An Integrator<int, float> called "accumulator" adds up all the counts it
@@ -63,20 +69,11 @@ void setup() {
   auto* accumulator =
       new Integrator<float, float>(gypsy_circum, saved_length, accum_config_path);
 
+  /* Set Gypsy Circum in web interface */
   ConfigItem(accumulator)
       ->set_title("Gypsy circum")
       ->set_description("Gypsy circum in m")
       ->set_sort_order(1000);
-
-  /* Save the chain length function */
-  auto save_chain_length = [accumulator]() {
-    float current_length = accumulator->get();
-    ESP_LOGI(__FILE__, "Longueur de %f sauvegardée.", current_length);
-    Preferences prefs;
-    prefs.begin("chain", false);  // false = écriture
-    prefs.putFloat("length", current_length);
-    prefs.end();
-  };
 
   /**
    * There is no path for the amount of anchor rode deployed in the current
@@ -103,84 +100,59 @@ void setup() {
   auto sk_output = new SKOutputFloat(sk_path, sk_path_config_path, metadata);
   accumulator->connect_to(sk_output);
 
+  /* Publish sk data every seconds */
   auto* sk_timer = new RepeatSensor<bool>(1000, [accumulator] () -> bool {
     accumulator->notify();
     return true;
   });
 
+  /* Save the chain length function */
+  auto save_chain_length = [accumulator]() {
+    float current_length = accumulator->get();
+    ESP_LOGI(__FILE__, "Longueur de %f sauvegardée.", current_length);
+    Preferences prefs;
+    prefs.begin("chain", false);  // false = écriture
+    prefs.putFloat("length", current_length);
+    prefs.end();
+  };
 
+  /* Up pin */
+  auto* up_handler = new LambdaConsumer<int>( [](int input) {
+    ESP_LOGI(__FILE__, "Bouton UP Changes");
+    if (input == 1) {
+      ESP_LOGI(__FILE__, "Bouton UP ON => Up");
+      up =true;
+    } else {
+      ESP_LOGI(__FILE__, "Bouton UP OFF => Down");
+      up = false;
+    }
+  });
+  di1_input->connect_to(di1_debounce)->connect_to(up_handler);
 
-// Détection UP_PIN (avec debounce)
-auto* up_input = new DigitalInputChange(UP_PIN, INPUT_PULLUP, CHANGE, "/up/read_delay");
-auto* up_debounce = new DebounceInt(15, "/up/debounce");
-auto* up_handler = new LambdaConsumer<int>( [](int input) {
-  ESP_LOGI(__FILE__, "Bouton UP Changes");
-  if (input == 1) {
-    ESP_LOGI(__FILE__, "Bouton UP ON => Up");
-    up =true;
-  } else {
-    ESP_LOGI(__FILE__, "Bouton UP OFF => Down");
-    up = false;
-  }
-});
-up_input->connect_to(up_debounce)->connect_to(up_handler);
+  /* Détection DOWN_PIN (avec debounce) */
+  auto* down_handler = new LambdaConsumer<int>( [](int input) {
+    if (input == 1) {
+      ESP_LOGI(__FILE__, "Bouton Down Rise => Down");
+      up = false;
+    }
+  });
+  di2_input->connect_to(di2_debounce)->connect_to(down_handler);
 
-// Détection DOWN_PIN (avec debounce)
-auto* down_input = new DigitalInputChange(DOWN_PIN, INPUT, CHANGE, "/down/read_delay");
-auto* down_debounce = new DebounceInt(15, "/down/debounce");
-auto* down_handler = new LambdaConsumer<int>( [](int input) {
-  if (input == 1) {
-    ESP_LOGI(__FILE__, "Bouton Down Rise => Down");
-    up = false;
-  }
-});
-down_input->connect_to(down_debounce)->connect_to(down_handler);
-
-// Détection COUNTER_PIN (avec debounce)
-auto* counter_input = new DigitalInputChange(COUNTER_PIN, INPUT, CHANGE, "/counter/read_delay");
-auto* counter_debounce = new DebounceInt(15, "/counter/debounce");
-
-
-auto* counter_handler = new LambdaConsumer<int>( [save_chain_length, accumulator](int input) {
-  if (input == 1) {
-  ESP_LOGI(__FILE__, "Bouton Counter Rise");
-  
-  if (up) {
-    accumulator->set(-1);
-    //chain_length = chain_length - gypsy_circum;
-    ESP_LOGI(__FILE__, "Décrémenté");
-  } else {
-    accumulator->set(1);
-    //accumulator->notify();
-    //chain_length = chain_length + gypsy_circum;
-    ESP_LOGI(__FILE__, "Incrémenté");
-  }
-  save_chain_length();
-  }
-});
-counter_input->connect_to(counter_debounce)->connect_to(counter_handler);
-
-
-  /**
-   * DigitalInputChange monitors a physical button connected to BUTTON_PIN.
-   * Because its interrupt type is CHANGE, it will emit a value when the button
-   * is pressed, and again when it's released, but that's OK - our
-   * LambdaConsumer function will act only on the press, and ignore the release.
-   * DigitalInputChange looks for a change every read_delay ms, which can be
-   * configured at read_delay_config_path in the Config UI.
-   */
-  String read_delay_config_path = "/button_watcher/read_delay";
-  auto* button_watcher = new DigitalInputChange(BUTTON_PIN, INPUT_PULLUP, CHANGE,
-                                                read_delay_config_path);
-
-  /**
-   * Create a DebounceInt to make sure we get a nice, clean signal from the
-   * button. Set the debounce delay period to 15 ms, which can be configured at
-   * debounce_config_path in the Config UI.
-   */
-  int debounce_delay = 15;
-  String debounce_config_path = "/debounce/delay";
-  auto* debounce = new DebounceInt(debounce_delay, debounce_config_path);
+  /* Détection COUNTER_PIN (avec debounce) */
+  auto* counter_handler = new LambdaConsumer<int>( [save_chain_length, accumulator](int input) {
+    if (input == 1) {
+    ESP_LOGI(__FILE__, "Bouton Counter Rise");
+    if (up) {
+      accumulator->set(-1);
+      ESP_LOGI(__FILE__, "Décrémenté");
+    } else {
+      accumulator->set(1);
+      ESP_LOGI(__FILE__, "Incrémenté");
+    }
+    save_chain_length();
+    }
+  });
+  di3_input->connect_to(di3_debounce)->connect_to(counter_handler);
 
   /**
    * When the button is pressed (or released), it will call the lambda
@@ -189,25 +161,15 @@ counter_input->connect_to(counter_debounce)->connect_to(counter_handler);
    * indicates a button press. It ignores the button release. If your button
    * goes to GND when pressed, make it "if (input == 0)".
    */
-  auto reset_function = [accumulator, save_chain_length](int input) {
+  auto* reset_handler = new LambdaConsumer<int>( [accumulator, save_chain_length](int input) {
     if (input == 1) {
       accumulator->reset();
       accumulator->set(0);
       ESP_LOGI(__FILE__, "Longueur réinitialisée à 0");
       save_chain_length();
     }
-  };
-
-  /**
-   * Create the LambdaConsumer that calls reset_function, Because
-   DigitalInputChange
-   * outputs an int, the version of LambdaConsumer we need is
-   LambdaConsumer<int>.
-  */
-  auto* button_consumer = new LambdaConsumer<int>(reset_function);
-
-  /* Connect the button_watcher to the debounce to the button_consumer. */
-  button_watcher->connect_to(debounce)->connect_to(button_consumer);
+  });
+  di4_input->connect_to(di4_debounce)->connect_to(reset_handler);
 }
 
 // The loop function is called in an endless loop during program execution.
