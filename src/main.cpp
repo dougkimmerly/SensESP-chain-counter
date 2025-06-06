@@ -1,8 +1,11 @@
+/* Bi-directionnal chain counter based on SensESP */
+
 #include "sensesp/sensors/digital_input.h"
 #include "sensesp/signalk/signalk_output.h"
 #include "sensesp/system/lambda_consumer.h"
 #include "sensesp/transforms/debounce.h"
 #include "sensesp/transforms/linear.h"
+#include "sensesp/ui/ui_controls.h"
 #include "sensesp/sensors/sensor.h"
 #include "sensesp_app.h"
 #include "sensesp_app_builder.h"
@@ -10,54 +13,111 @@
 
 using namespace sensesp;
 
-/* Define GPIOs */
-const int GPIO_DI1 = 23; //DIGITAL 1 in HALMET for UP relay
-const int GPIO_DI2 = 25; //DIGITAL 2 in HALMET for DOWN relay
-const int GPIO_DI3 = 27; //DIGITAL 3 in HALMET for CCOUNTER
-const int GPIO_DI4 = 26; //DIGITAL 4 in HALMET for RESET button
-
-/* Define mode for digital inputs.
-   Can be INPUT, INPUT_PULLUP or INPUT_PULLDOWN */
-const int MODE_DI1 = INPUT_PULLUP;
-const int MODE_DI2 = INPUT_PULLUP;
-const int MODE_DI3 = INPUT_PULLUP;
-const int MODE_DI4 = INPUT_PULLUP;
-
-/* Debounce Time for digital inputs in ms */
-const int DTIME_DI1 = 15;
-const int DTIME_DI2 = 15;
-const int DTIME_DI3 = 15;
-const int DTIME_DI4 = 15;
-
-/* Circum of Gypsy in m */
-const float gypsy_circum = 0.25;
-
-/* Delay after up and down action go to Free fall
-   due to inertia of gypsy */
-const int up_delay = 2000;
-const int down_delay = 2000;
-
-/**
- * This example illustrates an anchor chain counter. Note that it
- * doesn't distinguish between chain being let out and chain being
- * taken in, so the intended usage is this: Press the button to make
- * sure the counter is at 0.0. Let out chain until the counter shows
- * the amount you want out. Once the anchor is set, press the button
- * again to reset the counter to 0.0. As you bring the chain in, the
- * counter will show how much you have brought in. Press the button
- * again to reset the counter to 0.0, to be ready for the next anchor
- * deployment.
- *
- * A bi-directional chain counter is possible, but this is not one.
- */
-
+/* Prepare application */
 void setup() {
-  /* Prepare application */
   SetupLogging();
   SensESPAppBuilder builder;
   sensesp_app = builder.set_hostname("ChainCounter")
                     ->get_app();
   static reactesp::Event* delayptr = nullptr;
+
+  /* Default values */
+  float gypsy_circum_default = 0.25; //Default 0.25m
+  float up_delay_default     = 2000; //Default 2000ms = 2s
+  float down_delay_default   = 2000; //Default 2000ms = 2s
+  float di1_gpio_default     = 23;   // Default GPIO 23 = Digital Input 1 in HALMET
+  float di1_dtime_default    = 15;   // Default 15 ms
+  float di2_gpio_default     = 25;   // Default GPIO 25 = Digital Input 2 in HALMET
+  float di2_dtime_default    = 15;   // Default 15 ms
+  float di3_gpio_default     = 27;   // Default GPIO 27 = Digital Input 3 in HALMET
+  float di3_dtime_default    = 15;   // Default 15 ms
+  float di4_gpio_default     = 26;   // Default GPIO 26 = Digital Input 5 in HALMET
+  float di4_dtime_default    = 15;   // Default 15 ms
+
+  /* Save path */
+  String gypsy_circum_config_path = "/gypsy/circum";
+  String up_delay_config_path     = "/up/delay";
+  String down_delay_config_path   = "/down/delay";
+  String di1_gpio_config_path     = "/di1/gpio";
+  String di1_dtime_config_path    = "/di1/dbounce";
+  String di2_gpio_config_path     = "/di2/gpio";
+  String di2_dtime_config_path    = "/di2/dbounce";
+  String di3_gpio_config_path     = "/di3/gpio";
+  String di3_dtime_config_path    = "/di3/dbounce";
+  String di4_gpio_config_path     = "/di4/gpio";
+  String di4_dtime_config_path    = "/di4/dbounce";
+
+  /* Register config parameters */
+  auto gypsy_circum_config = std::make_shared<NumberConfig>(gypsy_circum_default,  gypsy_circum_config_path );
+  auto up_delay_config     = std::make_shared<NumberConfig>(up_delay_default,      up_delay_config_path     );
+  auto down_delay_config   = std::make_shared<NumberConfig>(down_delay_default,    down_delay_config_path   );
+  auto di1_gpio_config     = std::make_shared<NumberConfig>(di1_gpio_default,      di1_gpio_config_path     );
+  auto di1_dtime_config    = std::make_shared<NumberConfig>(di1_dtime_default,     di1_dtime_config_path    );
+  auto di2_gpio_config     = std::make_shared<NumberConfig>(di2_gpio_default,      di2_gpio_config_path     );
+  auto di2_dtime_config    = std::make_shared<NumberConfig>(di2_dtime_default,     di2_dtime_config_path    );
+  auto di3_gpio_config     = std::make_shared<NumberConfig>(di3_gpio_default,      di3_gpio_config_path     );
+  auto di3_dtime_config    = std::make_shared<NumberConfig>(di3_dtime_default,     di3_dtime_config_path    );
+  auto di4_gpio_config     = std::make_shared<NumberConfig>(di4_gpio_default,      di4_gpio_config_path     );
+  auto di4_dtime_config    = std::make_shared<NumberConfig>(di4_dtime_default,     di4_dtime_config_path    );
+
+  /* Set parameters in UI */
+  ConfigItem(gypsy_circum_config)
+    ->set_title("Gypsy Circumference")
+    ->set_description("Circumference of the gypsy in meters")
+    ->set_sort_order(100);
+  ConfigItem(up_delay_config)
+    ->set_title("Up delay")
+    ->set_description("Time after a push to up button go to free fall")
+    ->set_sort_order(200);
+  ConfigItem(down_delay_config)
+    ->set_title("Down delay")
+    ->set_description("Time after a push to down button go to free fall")
+    ->set_sort_order(200);
+  ConfigItem(di1_gpio_config)
+    ->set_title("GPIO for UP button")
+    ->set_description("GPIO number connected to UP Button relay")
+    ->set_sort_order(1100);
+  ConfigItem(di1_dtime_config)
+    ->set_title("Debounce Time for UP button")
+    ->set_description("Debounce time in ms for UP Button relay")
+    ->set_sort_order(1150);
+  ConfigItem(di2_gpio_config)
+    ->set_title("GPIO for DOWN button")
+    ->set_description("GPIO number connected to DOWN Button relay")
+    ->set_sort_order(1200);
+  ConfigItem(di2_dtime_config)
+    ->set_title("Debounce Time for UP button")
+    ->set_description("Debounce time in ms for DOWN Button relay")
+    ->set_sort_order(1250);
+  ConfigItem(di3_gpio_config)
+    ->set_title("GPIO for Hall effect sensor")
+    ->set_description("GPIO number connected to hall effect sensor")
+    ->set_sort_order(1300);
+  ConfigItem(di3_dtime_config)
+    ->set_title("Debounce Time for hall effect sensor")
+    ->set_description("Debounce time in ms for hall effect sensor")
+    ->set_sort_order(1350);
+  ConfigItem(di4_gpio_config)
+    ->set_title("GPIO for RESET button")
+    ->set_description("GPIO number connected to RESET button")
+    ->set_sort_order(1400);
+  ConfigItem(di4_dtime_config)
+    ->set_title("Debounce Time for RESET button")
+    ->set_description("Debounce time in ms for RESET button")
+    ->set_sort_order(1450);
+
+  /* Get data from saved values or default paramters */
+  const float gypsy_circum = gypsy_circum_config->get_value();
+  const int   up_delay     = up_delay_config->get_value();
+  const int   down_delay   = down_delay_config->get_value();
+  const int   di1_gpio     = di1_gpio_config->get_value();
+  const int   di1_dtime    = di1_dtime_config->get_value();
+  const int   di2_gpio     = di2_gpio_config->get_value();
+  const int   di2_dtime    = di2_dtime_config->get_value();
+  const int   di3_gpio     = di3_gpio_config->get_value();
+  const int   di3_dtime    = di3_dtime_config->get_value();
+  const int   di4_gpio     = di4_gpio_config->get_value();
+  const int   di4_dtime    = di4_dtime_config->get_value();
 
   /* Get last saved chain length from disk */
   Preferences prefs;
@@ -66,14 +126,14 @@ void setup() {
   prefs.end();
 
   /* Digital inputs */
-  auto* di1_input = new DigitalInputChange(GPIO_DI1, MODE_DI1, CHANGE, "/di1/digital_input");
-  auto* di1_debounce = new DebounceInt(DTIME_DI1, "/di1/debounce");
-  auto* di2_input = new DigitalInputChange(GPIO_DI2, MODE_DI2, CHANGE, "/di2/digital_input");
-  auto* di2_debounce = new DebounceInt(DTIME_DI2, "/di2/debounce");
-  auto* di3_input = new DigitalInputChange(GPIO_DI3, MODE_DI3, CHANGE, "/di3/digital_input");
-  auto* di3_debounce = new DebounceInt(DTIME_DI3, "/di3/debounce");
-  auto* di4_input = new DigitalInputChange(GPIO_DI4, MODE_DI4, CHANGE, "/di4/digital_input");
-  auto* di4_debounce = new DebounceInt(DTIME_DI4, "/di4/debounce");
+  auto* di1_input = new DigitalInputChange(di1_gpio, INPUT, CHANGE, "/di1/digital_input");
+  auto* di1_debounce = new DebounceInt(di1_dtime, "/di1/debounce");
+  auto* di2_input = new DigitalInputChange(di2_gpio, INPUT, CHANGE, "/di2/digital_input");
+  auto* di2_debounce = new DebounceInt(di2_dtime, "/di2/debounce");
+  auto* di3_input = new DigitalInputChange(di3_gpio, INPUT, CHANGE, "/di3/digital_input");
+  auto* di3_debounce = new DebounceInt(di3_dtime, "/di3/debounce");
+  auto* di4_input = new DigitalInputChange(di4_gpio, INPUT, CHANGE, "/di4/digital_input");
+  auto* di4_debounce = new DebounceInt(di4_dtime, "/di4/debounce");
 
   /**
    * An Integrator<int, float> called "accumulator" adds up all the counts it
@@ -83,15 +143,9 @@ void setup() {
    * be a float, which is why we use Integrator<int, float>). It can be
    * configured in the Config UI at accum_config_path.
    */
-  String accum_config_path = "/accumulator/circum";
+  //String accum_config_path = "/accumulator/circum";
   auto* accumulator =
-      new Integrator<float, float>(gypsy_circum, saved_length, accum_config_path);
-
-  /* Set Gypsy Circum in web interface */
-  ConfigItem(accumulator)
-      ->set_title("Gypsy circum")
-      ->set_description("Gypsy circum in m")
-      ->set_sort_order(1000);
+      new Integrator<float, float>(gypsy_circum, saved_length, "/accumulator/circum");
 
   /* Observable direction ("up", "down" or "free fall") */
   auto* direction = new ObservableValue<String>("free fall");
@@ -140,8 +194,8 @@ void setup() {
     prefs.end();
   };
 
-  /* Up pin */
-  auto* up_handler = new LambdaConsumer<int>( [delayptr, direction](int input) {
+  /* React to UP action */
+  auto* up_handler = new LambdaConsumer<int>( [up_delay, delayptr, direction](int input) {
     ESP_LOGI(__FILE__, "Bouton UP Changes");
     if (delayptr != nullptr) { 
       event_loop()->remove(delayptr);
@@ -160,8 +214,8 @@ void setup() {
   });
   di1_input->connect_to(di1_debounce)->connect_to(up_handler);
 
-  /* Détection DOWN_PIN (avec debounce) */
-  auto* down_handler = new LambdaConsumer<int>( [delayptr, direction](int input) {
+  /* React to DOWN action */
+  auto* down_handler = new LambdaConsumer<int>( [down_delay, delayptr, direction](int input) {
     if (delayptr != nullptr) { 
       event_loop()->remove(delayptr);
       delayptr=nullptr;
@@ -179,7 +233,7 @@ void setup() {
   });
   di2_input->connect_to(di2_debounce)->connect_to(down_handler);
 
-  /* Détection COUNTER_PIN (avec debounce) */
+  /* React to COUNTER action */
   auto* counter_handler = new LambdaConsumer<int>( [direction, save_chain_length, accumulator](int input) {
     if (input == 1) {
       ESP_LOGI(__FILE__, "Bouton Counter Rise");
@@ -195,13 +249,7 @@ void setup() {
   });
   di3_input->connect_to(di3_debounce)->connect_to(counter_handler);
 
-  /**
-   * When the button is pressed (or released), it will call the lambda
-   * expression (or "function") that's called by the LambdaConsumer. This is the
-   * function - notice that it calls reset() only when the input is 1, which
-   * indicates a button press. It ignores the button release. If your button
-   * goes to GND when pressed, make it "if (input == 0)".
-   */
+  /* React to RESET action */
   auto* reset_handler = new LambdaConsumer<int>( [accumulator, save_chain_length](int input) {
     if (input == 1) {
       accumulator->reset();
