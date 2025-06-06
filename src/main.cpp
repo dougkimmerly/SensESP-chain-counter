@@ -15,8 +15,27 @@ const int GPIO_DI1 = 23; //DIGITAL 1 in HALMET for UP relay
 const int GPIO_DI2 = 25; //DIGITAL 2 in HALMET for DOWN relay
 const int GPIO_DI3 = 27; //DIGITAL 3 in HALMET for CCOUNTER
 const int GPIO_DI4 = 26; //DIGITAL 4 in HALMET for RESET button
+
+/* Define mode for digital inputs.
+   Can be INPUT, INPUT_PULLUP or INPUT_PULLDOWN */
+const int MODE_DI1 = INPUT_PULLUP;
+const int MODE_DI2 = INPUT_PULLUP;
+const int MODE_DI3 = INPUT_PULLUP;
+const int MODE_DI4 = INPUT_PULLUP;
+
+/* Debounce Time for digital inputs in ms */
+const int DTIME_DI1 = 15;
+const int DTIME_DI2 = 15;
+const int DTIME_DI3 = 15;
+const int DTIME_DI4 = 15;
+
+/* Circum of Gypsy in m */
 const float gypsy_circum = 0.25;
-static reactesp::Event* delayptr = nullptr;
+
+/* Delay after up and down action go to Free fall
+   due to inertia of gypsy */
+const int up_delay = 2000;
+const int down_delay = 2000;
 
 /**
  * This example illustrates an anchor chain counter. Note that it
@@ -38,6 +57,7 @@ void setup() {
   SensESPAppBuilder builder;
   sensesp_app = builder.set_hostname("ChainCounter")
                     ->get_app();
+  static reactesp::Event* delayptr = nullptr;
 
   /* Get last saved chain length from disk */
   Preferences prefs;
@@ -46,14 +66,14 @@ void setup() {
   prefs.end();
 
   /* Digital inputs */
-  auto* di1_input = new DigitalInputChange(GPIO_DI1, INPUT_PULLUP, CHANGE, "/di1/digital_input");
-  auto* di1_debounce = new DebounceInt(15, "/di1/debounce");
-  auto* di2_input = new DigitalInputChange(GPIO_DI2, INPUT_PULLUP, CHANGE, "/di2/digital_input");
-  auto* di2_debounce = new DebounceInt(15, "/di2/debounce");
-  auto* di3_input = new DigitalInputChange(GPIO_DI3, INPUT_PULLUP, CHANGE, "/di3/digital_input");
-  auto* di3_debounce = new DebounceInt(15, "/di3/debounce");
-  auto* di4_input = new DigitalInputChange(GPIO_DI4, INPUT_PULLUP, CHANGE, "/di4/digital_input");
-  auto* di4_debounce = new DebounceInt(15, "/di4/debounce");
+  auto* di1_input = new DigitalInputChange(GPIO_DI1, MODE_DI1, CHANGE, "/di1/digital_input");
+  auto* di1_debounce = new DebounceInt(DTIME_DI1, "/di1/debounce");
+  auto* di2_input = new DigitalInputChange(GPIO_DI2, MODE_DI2, CHANGE, "/di2/digital_input");
+  auto* di2_debounce = new DebounceInt(DTIME_DI2, "/di2/debounce");
+  auto* di3_input = new DigitalInputChange(GPIO_DI3, MODE_DI3, CHANGE, "/di3/digital_input");
+  auto* di3_debounce = new DebounceInt(DTIME_DI3, "/di3/debounce");
+  auto* di4_input = new DigitalInputChange(GPIO_DI4, MODE_DI4, CHANGE, "/di4/digital_input");
+  auto* di4_debounce = new DebounceInt(DTIME_DI4, "/di4/debounce");
 
   /**
    * An Integrator<int, float> called "accumulator" adds up all the counts it
@@ -74,7 +94,7 @@ void setup() {
       ->set_sort_order(1000);
 
   /* Observable direction ("up", "down" or "free fall") */
-  auto* direction = new ObservableValue<String>("free_fall");
+  auto* direction = new ObservableValue<String>("free fall");
   direction->connect_to(
     new SKOutputString("navigation.anchor.chainDirection", "/chain/direction") );
 
@@ -132,7 +152,7 @@ void setup() {
       direction->set("up");
     } else {
       ESP_LOGI(__FILE__, "Bouton UP OFF => Free fall");
-      delayptr = event_loop()->onDelay(2000, [delayptr, direction]() {
+      delayptr = event_loop()->onDelay(up_delay, [delayptr, direction]() {
         direction->set("free fall");
         delayptr=nullptr;
       });
@@ -151,7 +171,7 @@ void setup() {
       direction->set("down");
     } else {
       ESP_LOGI(__FILE__, "Bouton DOWN OFF => Free fall");
-      delayptr = event_loop()->onDelay(2000, [delayptr, direction]() {
+      delayptr = event_loop()->onDelay(down_delay, [delayptr, direction]() {
         direction->set("free fall");
         delayptr=nullptr;
       });
