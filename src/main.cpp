@@ -1,5 +1,7 @@
-/* Bi-directionnal chain counter based on SensESP */
+/* Bi-directional chain counter based on SensESP */
+#include <memory>
 
+#include "sensesp.h"
 #include "sensesp/sensors/digital_input.h"
 #include "sensesp/signalk/signalk_output.h"
 #include "sensesp/system/lambda_consumer.h"
@@ -10,6 +12,7 @@
 #include "sensesp_app.h"
 #include "sensesp_app_builder.h"
 #include <Preferences.h>
+#include "sensesp/signalk/signalk_put_request_listener.h"
 
 using namespace sensesp;
 
@@ -33,6 +36,7 @@ void setup() {
   float di3_dtime_default    = 15;   // Default 15 ms
   float di4_gpio_default     = 26;   // Default GPIO 26 = Digital Input 5 in HALMET
   float di4_dtime_default    = 15;   // Default 15 ms
+  float max_chain_default = 80.0; // Default 80m
 
   /* Save path */
   String gypsy_circum_config_path = "/gypsy/circum";
@@ -46,6 +50,7 @@ void setup() {
   String di3_dtime_config_path    = "/di3/dbounce";
   String di4_gpio_config_path     = "/di4/gpio";
   String di4_dtime_config_path    = "/di4/dbounce";
+  String max_chain_config_path = "/chain/max_length";
 
   /* Register config parameters */
   auto gypsy_circum_config = std::make_shared<NumberConfig>(gypsy_circum_default,  gypsy_circum_config_path );
@@ -59,6 +64,7 @@ void setup() {
   auto di3_dtime_config    = std::make_shared<NumberConfig>(di3_dtime_default,     di3_dtime_config_path    );
   auto di4_gpio_config     = std::make_shared<NumberConfig>(di4_gpio_default,      di4_gpio_config_path     );
   auto di4_dtime_config    = std::make_shared<NumberConfig>(di4_dtime_default,     di4_dtime_config_path    );
+  auto max_chain_config = std::make_shared<NumberConfig>(max_chain_default, max_chain_config_path    );
 
   /* Set parameters in UI */
   ConfigItem(gypsy_circum_config)
@@ -105,8 +111,12 @@ void setup() {
     ->set_title("Debounce Time for RESET button")
     ->set_description("Debounce time in ms for RESET button")
     ->set_sort_order(1450);
+  ConfigItem(max_chain_config)
+    ->set_title("Max chain length")
+    ->set_description("Maximum length of the chain in meters")
+    ->set_sort_order(1500);
 
-  /* Get data from saved values or default paramters */
+  /* Get data from saved values or default parameters */
   const float gypsy_circum = gypsy_circum_config->get_value();
   const int   up_delay     = up_delay_config->get_value();
   const int   down_delay   = down_delay_config->get_value();
@@ -118,6 +128,7 @@ void setup() {
   const int   di3_dtime    = di3_dtime_config->get_value();
   const int   di4_gpio     = di4_gpio_config->get_value();
   const int   di4_dtime    = di4_dtime_config->get_value();
+  const float max_chain    = max_chain_config->get_value();
 
   /* Get last saved chain length from disk */
   Preferences prefs;
@@ -155,7 +166,7 @@ void setup() {
   /**
    * There is no path for the amount of anchor rode deployed in the current
    * Signal K specification. By creating an instance of SKMetaData, we can send
-   * a partial or full defintion of the metadata that other consumers of Signal
+   * a partial or full definition of the metadata that other consumers of Signal
    * K data might find useful. (For example, Instrument Panel will benefit from
    * knowing the units to be displayed.) The metadata is sent only the first
    * time the data value is sent to the server.
@@ -177,7 +188,7 @@ void setup() {
   auto sk_output = new SKOutputFloat(sk_path, sk_path_config_path, metadata);
   accumulator->connect_to(sk_output);
 
-  /* Publish sk data every seconds */
+  /* Publish sk data every second */
   auto* sk_timer = new RepeatSensor<bool>(1000, [direction, accumulator] () -> bool {
     accumulator->notify();
     direction->notify();
@@ -195,18 +206,18 @@ void setup() {
   };
 
   /* React to UP action */
-  auto* up_handler = new LambdaConsumer<int>( [up_delay, delayptr, direction](int input) {
-    ESP_LOGI(__FILE__, "Bouton UP Changes");
+  auto* up_handler = new LambdaConsumer<int>( [up_delay, direction](int input) {
+    ESP_LOGI(__FILE__, "Button UP Changed");
     if (delayptr != nullptr) { 
       event_loop()->remove(delayptr);
       delayptr=nullptr;
     }
-    if (input == 1) {
-      ESP_LOGI(__FILE__, "Bouton UP ON => Up");
+    if (input == 0) {
+      ESP_LOGI(__FILE__, "Button UP ON => Up");
       direction->set("up");
     } else {
-      ESP_LOGI(__FILE__, "Bouton UP OFF => Free fall");
-      delayptr = event_loop()->onDelay(up_delay, [delayptr, direction]() {
+      ESP_LOGI(__FILE__, "Button UP OFF => Free fall");
+      delayptr = event_loop()->onDelay(up_delay, [direction]() {
         direction->set("free fall");
         delayptr=nullptr;
       });
@@ -215,17 +226,18 @@ void setup() {
   di1_input->connect_to(di1_debounce)->connect_to(up_handler);
 
   /* React to DOWN action */
-  auto* down_handler = new LambdaConsumer<int>( [down_delay, delayptr, direction](int input) {
+  auto* down_handler = new LambdaConsumer<int>( [down_delay, direction](int input) {
+    ESP_LOGI(__FILE__, "Button DOWN Changed");  
     if (delayptr != nullptr) { 
       event_loop()->remove(delayptr);
       delayptr=nullptr;
     }
-    if (input == 1) {
-      ESP_LOGI(__FILE__, "Bouton DOWN ON => Down");
+    if (input == 0) {
+      ESP_LOGI(__FILE__, "Button DOWN ON => Down");
       direction->set("down");
     } else {
-      ESP_LOGI(__FILE__, "Bouton DOWN OFF => Free fall");
-      delayptr = event_loop()->onDelay(down_delay, [delayptr, direction]() {
+      ESP_LOGI(__FILE__, "Button DOWN OFF => Free fall");
+      delayptr = event_loop()->onDelay(down_delay, [direction]() {
         direction->set("free fall");
         delayptr=nullptr;
       });
@@ -234,15 +246,29 @@ void setup() {
   di2_input->connect_to(di2_debounce)->connect_to(down_handler);
 
   /* React to COUNTER action */
-  auto* counter_handler = new LambdaConsumer<int>( [direction, save_chain_length, accumulator](int input) {
-    if (input == 1) {
-      ESP_LOGI(__FILE__, "Bouton Counter Rise");
+  auto* counter_handler = new LambdaConsumer<int>( [
+    gypsy_circum, max_chain, direction, save_chain_length, accumulator
+     ](int input) {
+    if (input == 0) {
+        float current_value = accumulator->get(); 
+
+      ESP_LOGI(__FILE__, "The Gypsy is turning");
       if (direction->get() == "up") {
-        accumulator->set(-1);
-        ESP_LOGI(__FILE__, "Décrémenté");
+        if(current_value - gypsy_circum < 0) {
+            ESP_LOGI(__FILE__, "Already at the 0 Chain ");
+        } else {
+            accumulator->set(-1);
+            ESP_LOGI(__FILE__, "Decrement Deployed Chain");
+        }
+
       } else {
-        accumulator->set(1);
-        ESP_LOGI(__FILE__, "Incrémenté");
+        if(current_value + gypsy_circum > max_chain) {
+            ESP_LOGI(__FILE__, "Already at the Max Chain Length");
+        } else {
+            accumulator->set(1);
+            ESP_LOGI(__FILE__, "Increment Deployed Chain");
+        }
+        
       }
       save_chain_length();
     }
@@ -259,6 +285,16 @@ void setup() {
     }
   });
   di4_input->connect_to(di4_debounce)->connect_to(reset_handler);
+
+  // Set up a listener to respond to requested resets of the chain length
+  auto* reset_listener = new IntSKPutRequestListener("navigation.anchor.rodeDeployed");
+  reset_listener->connect_to(reset_handler);
+
+  // To avoid garbage collecting all shared pointers created in setup(),
+  // loop from here.
+  while (true) {
+    loop();
+  }
 }
 
 /* The loop function is called in an endless loop during program execution.
