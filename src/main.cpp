@@ -13,8 +13,12 @@
 #include "sensesp_app_builder.h"
 #include <Preferences.h>
 #include "sensesp/signalk/signalk_put_request_listener.h"
+#include "sensesp/signalk/signalk_value_listener.h"
+#include "sensesp/types/position.h"
 
 using namespace sensesp;
+
+bool ignore_input = true;
 
 /* Prepare application */
 void setup() {
@@ -28,15 +32,17 @@ void setup() {
   float gypsy_circum_default = 0.25; //Default 0.25m
   float up_delay_default     = 2000; //Default 2000ms = 2s
   float down_delay_default   = 2000; //Default 2000ms = 2s
-  float di1_gpio_default     = 23;   // Default GPIO 23 = Digital Input 1 in HALMET
+  float di1_gpio_default     = 23;   // UP Button
   float di1_dtime_default    = 15;   // Default 15 ms
-  float di2_gpio_default     = 25;   // Default GPIO 25 = Digital Input 2 in HALMET
+  float di2_gpio_default     = 25;   // DOWN Button
   float di2_dtime_default    = 15;   // Default 15 ms
-  float di3_gpio_default     = 27;   // Default GPIO 27 = Digital Input 3 in HALMET
-  float di3_dtime_default    = 15;   // Default 15 ms
-  float di4_gpio_default     = 26;   // Default GPIO 26 = Digital Input 5 in HALMET
+  float di3_gpio_default     = 27;   // Hall effect sensor
+  float di3_dtime_default    = 25;   // Default 15 ms
+  float di4_gpio_default     = 26;   // RESET Button
   float di4_dtime_default    = 15;   // Default 15 ms
-  float max_chain_default = 80.0; // Default 80m
+  float upRelay_default      = 16;   // UP Relay
+  float dnRelay_default      = 19;   // DOWN Relay
+  float max_chain_default    = 80.0; // Default 80m
 
   /* Save path */
   String gypsy_circum_config_path = "/gypsy/circum";
@@ -50,7 +56,9 @@ void setup() {
   String di3_dtime_config_path    = "/di3/dbounce";
   String di4_gpio_config_path     = "/di4/gpio";
   String di4_dtime_config_path    = "/di4/dbounce";
-  String max_chain_config_path = "/chain/max_length";
+  String max_chain_config_path    = "/chain/max_length";
+  String upRelay_config_path     = "/di5/gpio";
+  String dnRelay_config_path     = "/di6/gpio";  
 
   /* Register config parameters */
   auto gypsy_circum_config = std::make_shared<NumberConfig>(gypsy_circum_default,  gypsy_circum_config_path );
@@ -64,8 +72,11 @@ void setup() {
   auto di3_dtime_config    = std::make_shared<NumberConfig>(di3_dtime_default,     di3_dtime_config_path    );
   auto di4_gpio_config     = std::make_shared<NumberConfig>(di4_gpio_default,      di4_gpio_config_path     );
   auto di4_dtime_config    = std::make_shared<NumberConfig>(di4_dtime_default,     di4_dtime_config_path    );
-  auto max_chain_config = std::make_shared<NumberConfig>(max_chain_default, max_chain_config_path    );
-
+  auto max_chain_config    = std::make_shared<NumberConfig>(max_chain_default,     max_chain_config_path    );
+  auto upRelay_config      = std::make_shared<NumberConfig>(upRelay_default,      upRelay_config_path     );
+  auto dnRelay_config      = std::make_shared<NumberConfig>(dnRelay_default,      dnRelay_config_path     );
+  
+  
   /* Set parameters in UI */
   ConfigItem(gypsy_circum_config)
     ->set_title("Gypsy Circumference")
@@ -83,6 +94,10 @@ void setup() {
     ->set_title("GPIO for UP button")
     ->set_description("GPIO number connected to UP Button relay")
     ->set_sort_order(1100);
+  ConfigItem(upRelay_config)
+    ->set_title("GPIO for UP relay")
+    ->set_description("GPIO number connected to UP Button relay")
+    ->set_sort_order(1125);
   ConfigItem(di1_dtime_config)
     ->set_title("Debounce Time for UP button")
     ->set_description("Debounce time in ms for UP Button relay")
@@ -91,6 +106,10 @@ void setup() {
     ->set_title("GPIO for DOWN button")
     ->set_description("GPIO number connected to DOWN Button relay")
     ->set_sort_order(1200);
+  ConfigItem(dnRelay_config)
+    ->set_title("GPIO for DOWN relay")
+    ->set_description("GPIO number connected to DOWN Button relay")
+    ->set_sort_order(1135);   
   ConfigItem(di2_dtime_config)
     ->set_title("Debounce Time for UP button")
     ->set_description("Debounce time in ms for DOWN Button relay")
@@ -128,23 +147,35 @@ void setup() {
   const int   di3_dtime    = di3_dtime_config->get_value();
   const int   di4_gpio     = di4_gpio_config->get_value();
   const int   di4_dtime    = di4_dtime_config->get_value();
+  const int   upRelay      = upRelay_config->get_value();
+  const int   dnRelay      = dnRelay_config->get_value();
   const float max_chain    = max_chain_config->get_value();
 
   /* Get last saved chain length from disk */
   Preferences prefs;
-  prefs.begin("chain", true);  // true = lecture seule
+  prefs.begin("chain", true);  // true = read only
   float saved_length = prefs.getFloat("length", 0.0);
   prefs.end();
 
   /* Digital inputs */
-  auto* di1_input = new DigitalInputChange(di1_gpio, INPUT, CHANGE, "/di1/digital_input");
+  auto* di1_input = new DigitalInputChange(di1_gpio, INPUT_PULLDOWN, CHANGE, "/di1/digital_input");
   auto* di1_debounce = new DebounceInt(di1_dtime, "/di1/debounce");
-  auto* di2_input = new DigitalInputChange(di2_gpio, INPUT, CHANGE, "/di2/digital_input");
+  auto* di2_input = new DigitalInputChange(di2_gpio, INPUT_PULLDOWN, CHANGE, "/di2/digital_input");
   auto* di2_debounce = new DebounceInt(di2_dtime, "/di2/debounce");
-  auto* di3_input = new DigitalInputChange(di3_gpio, INPUT, CHANGE, "/di3/digital_input");
+  auto* di3_input = new DigitalInputChange(di3_gpio, INPUT_PULLDOWN, CHANGE, "/di3/digital_input");
   auto* di3_debounce = new DebounceInt(di3_dtime, "/di3/debounce");
-  auto* di4_input = new DigitalInputChange(di4_gpio, INPUT, CHANGE, "/di4/digital_input");
+  auto* di4_input = new DigitalInputChange(di4_gpio, INPUT_PULLDOWN, CHANGE, "/di4/digital_input");
   auto* di4_debounce = new DebounceInt(di4_dtime, "/di4/debounce");
+  
+  /*Digital Outputs*/
+  int upRelayPin = (int)upRelay;
+  int dnRelayPin = (int)dnRelay;
+
+  pinMode(upRelayPin, OUTPUT);
+  pinMode(dnRelayPin, OUTPUT);  
+  digitalWrite(upRelay, LOW); // Relay off
+  digitalWrite(dnRelay, LOW); // Relay off
+
 
   /**
    * An Integrator<int, float> called "accumulator" adds up all the counts it
@@ -189,7 +220,7 @@ void setup() {
   accumulator->connect_to(sk_output);
 
   /* Publish sk data every second */
-  auto* sk_timer = new RepeatSensor<bool>(1000, [direction, accumulator] () -> bool {
+  auto* sk_timer = new RepeatSensor<bool>(11000, [direction, accumulator] () -> bool {
     accumulator->notify();
     direction->notify();
     return true;
@@ -197,8 +228,11 @@ void setup() {
 
   /* Save the chain length function */
   auto save_chain_length = [accumulator]() {
+    if(ignore_input) {  
+      return;
+    }
     float current_length = accumulator->get();
-    ESP_LOGI(__FILE__, "Longueur de %f sauvegardée.", current_length);
+    ESP_LOGI(__FILE__, "Deployed chain of %f saved to nvm.", current_length);
     Preferences prefs;
     prefs.begin("chain", false);  // false = écriture
     prefs.putFloat("length", current_length);
@@ -208,6 +242,9 @@ void setup() {
   /* React to UP action */
   auto* up_handler = new LambdaConsumer<int>( [up_delay, direction](int input) {
     ESP_LOGI(__FILE__, "Button UP Changed");
+    if(ignore_input) {  
+      return;
+    }
     if (delayptr != nullptr) { 
       event_loop()->remove(delayptr);
       delayptr=nullptr;
@@ -227,7 +264,10 @@ void setup() {
 
   /* React to DOWN action */
   auto* down_handler = new LambdaConsumer<int>( [down_delay, direction](int input) {
-    ESP_LOGI(__FILE__, "Button DOWN Changed");  
+    ESP_LOGI(__FILE__, "Button DOWN Changed"); 
+    if(ignore_input) {  
+      return;
+    } 
     if (delayptr != nullptr) { 
       event_loop()->remove(delayptr);
       delayptr=nullptr;
@@ -249,7 +289,11 @@ void setup() {
   auto* counter_handler = new LambdaConsumer<int>( [
     gypsy_circum, max_chain, direction, save_chain_length, accumulator
      ](int input) {
-    if (input == 0) {
+    if(ignore_input) {  
+      return;
+    }
+      ESP_LOGI(__FILE__, "the input change is %d", input);
+    if (input == 1) {
         float current_value = accumulator->get(); 
 
       ESP_LOGI(__FILE__, "The Gypsy is turning");
@@ -277,18 +321,73 @@ void setup() {
 
   /* React to RESET action */
   auto* reset_handler = new LambdaConsumer<int>( [accumulator, save_chain_length](int input) {
+    if(ignore_input) {  
+      return;
+    }
     if (input == 1) {
       accumulator->reset();
       accumulator->set(0);
-      ESP_LOGI(__FILE__, "Longueur réinitialisée à 0");
+      ESP_LOGI(__FILE__, "Deployed chain reset to 0");
       save_chain_length();
     }
   });
   di4_input->connect_to(di4_debounce)->connect_to(reset_handler);
 
+
   // Set up a listener to respond to requested resets of the chain length
   auto* reset_listener = new IntSKPutRequestListener("navigation.anchor.rodeDeployed");
   reset_listener->connect_to(reset_handler);
+
+//////////////////////////////////////////////////////////////////////////
+//      Windlass Control Section
+//////////////////////////////////////////////////////////////////////////
+  auto* drop_command = new ObservableValue<bool>(false);
+  drop_command->connect_to(
+  new SKOutputBool("navigation.anchor.drop", "/anchorDrop/sk") );
+
+  auto* sk_timer2 = new RepeatSensor<bool>(11000, [drop_command] () -> bool {
+    drop_command->notify();
+    return true;
+  });
+
+  auto* depth_listener = new SKValueListener<float>("environment.depth.belowTransducer",
+                                                    2000,
+                                                    "/depth/sk");
+
+  auto* drop_listener = new BoolSKPutRequestListener("navigation.anchor.drop");
+  drop_listener->connect_to(new LambdaConsumer<bool>( [
+     depth_listener, dnRelayPin
+     ](bool input) {
+    if (input == true) {
+        ESP_LOGI(__FILE__, "DROP command received");
+        float drop_depth = depth_listener->get() + 2.0; // add 2m to the depth for slack chain on bottom
+        float drop_time = (drop_depth) * 1000; // 1m/s drop rate
+        ESP_LOGI(__FILE__, "Drop Depth %f m, Drop time %f ms", drop_depth, drop_time);
+        digitalWrite(dnRelayPin, HIGH); // Relay on
+        event_loop()->onDelay(drop_time, [dnRelayPin]() {
+          digitalWrite(dnRelayPin, LOW); // Relay off
+          ESP_LOGI(__FILE__, "DROP command Finished");
+        });
+    }
+  }));
+
+
+  
+  
+
+
+
+
+    int iStateCounter = digitalRead(di3_gpio);
+    ESP_LOGI(__FILE__, "Initial di3_gpio state: %d", iStateCounter);
+    int iStateUP = digitalRead(upRelayPin);
+    ESP_LOGI(__FILE__, "Initial UP button state: %d", iStateUP);
+    int iStateDOWN = digitalRead(dnRelayPin);
+    ESP_LOGI(__FILE__, "Initial DOWN button state: %d", iStateDOWN);
+
+    event_loop()->onDelay(2000, []() {
+      ignore_input = false; 
+    });
 
   // To avoid garbage collecting all shared pointers created in setup(),
   // loop from here.
