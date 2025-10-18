@@ -15,10 +15,13 @@
 #include "sensesp/signalk/signalk_put_request_listener.h"
 #include "sensesp/signalk/signalk_value_listener.h"
 #include "sensesp/types/position.h"
+#include "ChainController.h"
 
 using namespace sensesp;
 
 bool ignore_input = true;
+
+ChainController* chainController;
 
 /* Prepare application */
 void setup() {
@@ -26,7 +29,8 @@ void setup() {
   SensESPAppBuilder builder;
   sensesp_app = builder.set_hostname("ChainCounter")
                     ->get_app();
-  static reactesp::Event* delayptr = nullptr;
+  static reactesp::Event* buttonDelayPtr = nullptr;
+  static reactesp::Event* commandDelayPtr = nullptr;
 
   /* Default values */
   float gypsy_circum_default = 0.25; //Default 0.25m
@@ -37,12 +41,13 @@ void setup() {
   float di2_gpio_default     = 25;   // DOWN Button
   float di2_dtime_default    = 15;   // Default 15 ms
   float di3_gpio_default     = 27;   // Hall effect sensor
-  float di3_dtime_default    = 25;   // Default 15 ms
+  float di3_dtime_default    = 15;   // Default 15 ms
   float di4_gpio_default     = 26;   // RESET Button
   float di4_dtime_default    = 15;   // Default 15 ms
   float upRelay_default      = 16;   // UP Relay
   float dnRelay_default      = 19;   // DOWN Relay
   float max_chain_default    = 80.0; // Default 80m
+
 
   /* Save path */
   String gypsy_circum_config_path = "/gypsy/circum";
@@ -58,7 +63,8 @@ void setup() {
   String di4_dtime_config_path    = "/di4/dbounce";
   String max_chain_config_path    = "/chain/max_length";
   String upRelay_config_path     = "/di5/gpio";
-  String dnRelay_config_path     = "/di6/gpio";  
+  String dnRelay_config_path     = "/di6/gpio"; 
+
 
   /* Register config parameters */
   auto gypsy_circum_config = std::make_shared<NumberConfig>(gypsy_circum_default,  gypsy_circum_config_path );
@@ -73,8 +79,8 @@ void setup() {
   auto di4_gpio_config     = std::make_shared<NumberConfig>(di4_gpio_default,      di4_gpio_config_path     );
   auto di4_dtime_config    = std::make_shared<NumberConfig>(di4_dtime_default,     di4_dtime_config_path    );
   auto max_chain_config    = std::make_shared<NumberConfig>(max_chain_default,     max_chain_config_path    );
-  auto upRelay_config      = std::make_shared<NumberConfig>(upRelay_default,      upRelay_config_path     );
-  auto dnRelay_config      = std::make_shared<NumberConfig>(dnRelay_default,      dnRelay_config_path     );
+  auto upRelay_config      = std::make_shared<NumberConfig>(upRelay_default,       upRelay_config_path      );
+  auto dnRelay_config      = std::make_shared<NumberConfig>(dnRelay_default,       dnRelay_config_path      );
   
   
   /* Set parameters in UI */
@@ -150,12 +156,15 @@ void setup() {
   const int   upRelay      = upRelay_config->get_value();
   const int   dnRelay      = dnRelay_config->get_value();
   const float max_chain    = max_chain_config->get_value();
+ 
 
   /* Get last saved chain length from disk */
   Preferences prefs;
   prefs.begin("chain", true);  // true = read only
   float saved_length = prefs.getFloat("length", 0.0);
   prefs.end();
+
+  ESP_LOGI(__FILE__, "the saved chain length is %f", saved_length );
 
   /* Digital inputs */
   auto* di1_input = new DigitalInputChange(di1_gpio, INPUT_PULLDOWN, CHANGE, "/di1/digital_input");
@@ -234,7 +243,7 @@ void setup() {
     float current_length = accumulator->get();
     ESP_LOGI(__FILE__, "Deployed chain of %f saved to nvm.", current_length);
     Preferences prefs;
-    prefs.begin("chain", false);  // false = écriture
+    prefs.begin("chain", false);  // false = writeable
     prefs.putFloat("length", current_length);
     prefs.end();
   };
@@ -245,18 +254,18 @@ void setup() {
     if(ignore_input) {  
       return;
     }
-    if (delayptr != nullptr) { 
-      event_loop()->remove(delayptr);
-      delayptr=nullptr;
+    if (buttonDelayPtr != nullptr) { 
+      event_loop()->remove(buttonDelayPtr);
+      buttonDelayPtr=nullptr;
     }
     if (input == 0) {
       ESP_LOGI(__FILE__, "Button UP ON => Up");
       direction->set("up");
     } else {
       ESP_LOGI(__FILE__, "Button UP OFF => Free fall");
-      delayptr = event_loop()->onDelay(up_delay, [direction]() {
+      buttonDelayPtr = event_loop()->onDelay(up_delay, [direction]() {
         direction->set("free fall");
-        delayptr=nullptr;
+        buttonDelayPtr=nullptr;
       });
     }
   });
@@ -268,18 +277,18 @@ void setup() {
     if(ignore_input) {  
       return;
     } 
-    if (delayptr != nullptr) { 
-      event_loop()->remove(delayptr);
-      delayptr=nullptr;
+    if (buttonDelayPtr != nullptr) { 
+      event_loop()->remove(buttonDelayPtr);
+      buttonDelayPtr=nullptr;
     }
     if (input == 0) {
       ESP_LOGI(__FILE__, "Button DOWN ON => Down");
       direction->set("down");
     } else {
       ESP_LOGI(__FILE__, "Button DOWN OFF => Free fall");
-      delayptr = event_loop()->onDelay(down_delay, [direction]() {
+      buttonDelayPtr = event_loop()->onDelay(down_delay, [direction]() {
         direction->set("free fall");
-        delayptr=nullptr;
+        buttonDelayPtr=nullptr;
       });
     }
   });
@@ -299,7 +308,7 @@ void setup() {
       ESP_LOGI(__FILE__, "The Gypsy is turning");
       if (direction->get() == "up") {
         if(current_value - gypsy_circum < 0) {
-            ESP_LOGI(__FILE__, "Already at the 0 Chain ");
+            ESP_LOGI(__FILE__, "Already at 0m of Chain ");
         } else {
             accumulator->set(-1);
             ESP_LOGI(__FILE__, "Decrement Deployed Chain");
@@ -307,7 +316,7 @@ void setup() {
 
       } else {
         if(current_value + gypsy_circum > max_chain) {
-            ESP_LOGI(__FILE__, "Already at the Max Chain Length");
+            ESP_LOGI(__FILE__, "Already at the Max %0fm Chain Length", max_chain);
         } else {
             accumulator->set(1);
             ESP_LOGI(__FILE__, "Increment Deployed Chain");
@@ -338,45 +347,101 @@ void setup() {
   auto* reset_listener = new IntSKPutRequestListener("navigation.anchor.rodeDeployed");
   reset_listener->connect_to(reset_handler);
 
+
+  
 //////////////////////////////////////////////////////////////////////////
 //      Windlass Control Section
 //////////////////////////////////////////////////////////////////////////
-  auto* drop_command = new ObservableValue<bool>(false);
-  drop_command->connect_to(
-  new SKOutputBool("navigation.anchor.drop", "/anchorDrop/sk") );
 
-  auto* sk_timer2 = new RepeatSensor<bool>(11000, [drop_command] () -> bool {
-    drop_command->notify();
+
+  float min_length = 2.0;  // stop 2 meters before anchor is fully up
+  float stop_before_max = max_chain - 5.0;  // stop 5 meters before max
+
+  int relay_pin = (int)dnRelayPin;
+
+  chainController = new ChainController(
+    min_length, 
+    max_chain, 
+    stop_before_max, 
+    accumulator, 
+    dnRelayPin,
+    upRelayPin
+  );
+// Create a feedback connection from the accumulator to the chainController
+// so that it can monitor the current chain length and stop movement at limits
+  auto* feedback = new sensesp::LambdaConsumer<float>(
+      [&](float pos){ chainController->control(pos); }
+  );
+  accumulator->connect_to(feedback);
+
+// initialize up and down speeds from preferences
+  chainController->loadSpeedsFromPrefs();
+
+// Listen to the depth to know how much chain to use on initial drop
+  auto* depth_listener = 
+  new SKValueListener<float>("environment.depth.belowTransducer",
+                              2000,
+                              "/depth/sk");
+
+
+// Set up SKOutput so that we can then receive anchor commands
+// on this path
+  auto* anchor_command = new ObservableValue<String>("idle");
+  anchor_command->connect_to(
+  new SKOutputString("navigation.anchor.command", "/anchorCommand/sk") );
+
+  auto* sk_timer2 = new RepeatSensor<bool>(11000, [anchor_command] () -> bool {
+    anchor_command->notify();
     return true;
   });
 
-  auto* depth_listener = new SKValueListener<float>("environment.depth.belowTransducer",
-                                                    2000,
-                                                    "/depth/sk");
+  auto* command_listener = new StringSKPutRequestListener("navigation.anchor.command");
+  
+  /*
+  This is the main command handler for the windlass commands
+  As you create new String commands to be PUT to this path
+  you can add the controls here to respond to them.
+  */
+  command_listener->connect_to(new LambdaConsumer<String>( [
+     depth_listener, dnRelayPin, upRelayPin, accumulator
+     ](String input) {
 
-  auto* drop_listener = new BoolSKPutRequestListener("navigation.anchor.drop");
-  drop_listener->connect_to(new LambdaConsumer<bool>( [
-     depth_listener, dnRelayPin
-     ](bool input) {
-    if (input == true) {
+      ESP_LOGI(__FILE__, "Command received is %s", input.c_str());
+      if (chainController->isActive()) {
+          chainController->stop(); // when a new command arrives stop everything
+      }
+      if(commandDelayPtr != nullptr) { 
+        event_loop()->remove(commandDelayPtr);
+        commandDelayPtr=nullptr;
+      }
+    float chainStart = accumulator->get();
+    if(input == "drop") {
         ESP_LOGI(__FILE__, "DROP command received");
-        float drop_depth = depth_listener->get() + 2.0; // add 2m to the depth for slack chain on bottom
-        float drop_time = (drop_depth) * 1000; // 1m/s drop rate
-        ESP_LOGI(__FILE__, "Drop Depth %f m, Drop time %f ms", drop_depth, drop_time);
-        digitalWrite(dnRelayPin, HIGH); // Relay on
-        event_loop()->onDelay(drop_time, [dnRelayPin]() {
-          digitalWrite(dnRelayPin, LOW); // Relay off
-          ESP_LOGI(__FILE__, "DROP command Finished");
+        float drop_depth = depth_listener->get() + 4.0; // add 4m to the depth for slack chain on bottom
+        chainController->startDrop(drop_depth);
+        unsigned long moveTime = chainController->getTimeout();
+        commandDelayPtr = event_loop()->onDelay(moveTime, [moveTime]() {
+          ESP_LOGI(__FILE__, "movement timeout reached, stopping chain %1u s", moveTime);
+          chainController->stop();
+          commandDelayPtr=nullptr;
+        });
+    } 
+    if(input == "raise") {
+        ESP_LOGI(__FILE__, "RAISE command received");
+        chainController->startRaise(10.0);
+        unsigned long moveTime = chainController->getTimeout();
+        commandDelayPtr = event_loop()->onDelay(moveTime, [moveTime]() {
+          ESP_LOGI(__FILE__, "movement timeout reached, stopping chain %1u s", moveTime);
+          chainController->stop();
+          commandDelayPtr=nullptr;
         });
     }
+
   }));
 
 
-  
-  
 
-
-
+  // Startup delay to ignore input changes while system stabilizes
 
     int iStateCounter = digitalRead(di3_gpio);
     ESP_LOGI(__FILE__, "Initial di3_gpio state: %d", iStateCounter);
@@ -395,6 +460,9 @@ void setup() {
     loop();
   }
 }
+
+
+
 
 /* The loop function is called in an endless loop during program execution.
    It simply calls `app.tick()` which will then execute all events needed. */
