@@ -348,7 +348,7 @@ void setup() {
   reset_listener->connect_to(reset_handler);
 
 
-  
+
 //////////////////////////////////////////////////////////////////////////
 //      Windlass Control Section
 //////////////////////////////////////////////////////////////////////////
@@ -356,8 +356,6 @@ void setup() {
 
   float min_length = 2.0;  // stop 2 meters before anchor is fully up
   float stop_before_max = max_chain - 5.0;  // stop 5 meters before max
-
-  int relay_pin = (int)dnRelayPin;
 
   chainController = new ChainController(
     min_length, 
@@ -378,10 +376,15 @@ void setup() {
   chainController->loadSpeedsFromPrefs();
 
 // Listen to the depth to know how much chain to use on initial drop
-  auto* depth_listener = 
-  new SKValueListener<float>("environment.depth.belowTransducer",
+  auto* depthListener = 
+  new SKValueListener<float>("environment.depth.belowSurface",
                               2000,
                               "/depth/sk");
+// Listen to the distance for use in calculations
+  auto* distanceListener = 
+  new SKValueListener<float>("navigation.anchor.distanceFromBow",
+                              2000,
+                              "/distance/sk");
 
 
 // Set up SKOutput so that we can then receive anchor commands
@@ -401,14 +404,34 @@ void setup() {
   This is the main command handler for the windlass commands
   As you create new String commands to be PUT to this path
   you can add the controls here to respond to them.
+  The first thing that happens when a command is received is to
+  stop any current movement of the windlass. And if there is
+  a command timeout in progress, that is also cancelled.
+
+  Currently setup commands:
+    "drop"       - starts lowering the anchor until depth + 4m is reached 
+                    this is meant as the initial drop command
+    "raiseXX"    - starts raising the anchor by XX meters, e.g. "raise10" or "raise 10"
+                    raises the anchor by 10 meters
+    "lowerXX"    - starts lowering the anchor by XX meters e.g. "lower10" or "lower 10" 
+                    lowers the anchor by 10 meters
+    "autoRaise"  - (not implemented yet)starts raising the anchor fully until the minimum chain length is reached
+                    this uses the depth and distance to bow to calculate the slack
+                    in the chain and when to stop it will try up to 10 times to reach 
+                    the fully raised position
+    "autoPayout" -  (not implemented yet)starts lowering the anchor to a scope
+                    
+    "STOP"       - stops any movement in progress (since every command stops movement first,
+                    anything not defined here will just stop the windlass)
+
   */
   command_listener->connect_to(new LambdaConsumer<String>( [
-     depth_listener, dnRelayPin, upRelayPin, accumulator
+     depthListener, dnRelayPin, upRelayPin, accumulator, distanceListener
      ](String input) {
 
       ESP_LOGI(__FILE__, "Command received is %s", input.c_str());
       if (chainController->isActive()) {
-          chainController->stop(); // when a new command arrives stop everything
+          chainController->stop(); 
       }
       if(commandDelayPtr != nullptr) { 
         event_loop()->remove(commandDelayPtr);
@@ -417,8 +440,8 @@ void setup() {
     float chainStart = accumulator->get();
     if(input == "drop") {
         ESP_LOGI(__FILE__, "DROP command received");
-        float drop_depth = depth_listener->get() + 4.0; // add 4m to the depth for slack chain on bottom
-        chainController->startDrop(drop_depth);
+        float drop_depth = depthListener->get() + 4.0; // add 4m to the depth for slack chain on bottom
+        chainController->lowerAnchor(drop_depth);
         unsigned long moveTime = chainController->getTimeout();
         commandDelayPtr = event_loop()->onDelay(moveTime, [moveTime]() {
           ESP_LOGI(__FILE__, "movement timeout reached, stopping chain %1u s", moveTime);
@@ -426,20 +449,60 @@ void setup() {
           commandDelayPtr=nullptr;
         });
     } 
-    if(input == "raise") {
-        ESP_LOGI(__FILE__, "RAISE command received");
-        chainController->startRaise(10.0);
+    if (input.startsWith("raise")) {
+        int spaceIndex = input.indexOf(' ');
+        float raise_amount = 0;
+
+        if (spaceIndex != -1) {
+            // handle "raise 10" (with space)
+            String number_str = input.substring(spaceIndex + 1);
+            raise_amount = number_str.toFloat();
+        } else {
+            // handle "raise10" (no space)
+            String number_str = input.substring(5);
+            raise_amount = number_str.toFloat();
+        }
+
+        ESP_LOGI(__FILE__, "Raising %.2f meters", raise_amount);
+        chainController->raiseAnchor(raise_amount);
         unsigned long moveTime = chainController->getTimeout();
+
         commandDelayPtr = event_loop()->onDelay(moveTime, [moveTime]() {
-          ESP_LOGI(__FILE__, "movement timeout reached, stopping chain %1u s", moveTime);
-          chainController->stop();
-          commandDelayPtr=nullptr;
+            ESP_LOGI(__FILE__, "movement timeout reached, stopping chain %1u s", moveTime);
+            chainController->stop();
+            commandDelayPtr = nullptr;
+        });
+    }
+    if (input.startsWith("lower")) {
+        int spaceIndex = input.indexOf(' ');
+        float lower_amount = 0;
+
+        if (spaceIndex != -1) {
+            // handle "lower 10" (with space)
+            String number_str = input.substring(spaceIndex + 1);
+            lower_amount = number_str.toFloat();
+        } else {
+            // handle "lower10" (no space)
+            String number_str = input.substring(5);
+            lower_amount = number_str.toFloat();
+        }
+
+        ESP_LOGI(__FILE__, "Lowering %.2f meters", lower_amount);
+        chainController->lowerAnchor(lower_amount);
+        unsigned long moveTime = chainController->getTimeout();
+
+        commandDelayPtr = event_loop()->onDelay(moveTime, [moveTime]() {
+            ESP_LOGI(__FILE__, "movement timeout reached, stopping chain %1u s", moveTime);
+            chainController->stop();
+            commandDelayPtr = nullptr;
         });
     }
 
   }));
 
-
+///////////////////////////////////////////////////////////////////////////
+// End of Windlass Control Section
+///////////////////////////////////////////////////////////////////////////
 
   // Startup delay to ignore input changes while system stabilizes
 

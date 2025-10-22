@@ -18,11 +18,11 @@ ChainController::ChainController(
     upRelayPin_(upRelayPin),
     state_(ChainState::IDLE) {}
 
-void ChainController::startDrop(float amount) {
+void ChainController::lowerAnchor(float amount) {
     float current = accumulator_->get();
     start_position_ = current;
     movement_start_time_ = millis();
-        ESP_LOGI(__FILE__, "startDrop() called, start_time=%lu, start_pos=%f", 
+        ESP_LOGI(__FILE__, "lowerAnchor() called, start_time=%lu, start_pos=%f", 
          movement_start_time_, start_position_);    
     // Set target
     target_ = current + amount;
@@ -36,13 +36,13 @@ void ChainController::startDrop(float amount) {
     digitalWrite(downRelayPin_, HIGH);
     digitalWrite(upRelayPin_, LOW);
 
-    ESP_LOGI(__FILE__, "startDrop: lowering to %f", target_);
+    ESP_LOGI(__FILE__, "lowerAnchor: lowering to %f", target_);
 
     // Ensure control reacts instantly
     control(current);
 }
 
-void ChainController::startRaise(float amount) {
+void ChainController::raiseAnchor(float amount) {
     float current = accumulator_->get();
     start_position_ = current;
     movement_start_time_ = millis();
@@ -59,26 +59,12 @@ void ChainController::startRaise(float amount) {
     digitalWrite(upRelayPin_, HIGH);
     digitalWrite(downRelayPin_, LOW);
 
-    ESP_LOGI(__FILE__, "startRaise: raising to %f", target_);
+    ESP_LOGI(__FILE__, "raiseAnchor: raising to %f", target_);
 
     // React immediately
     control(current);
 }
 
-// void ChainController::control(float current_pos) {
-//   if (!active_) return;
-//   if (current_pos >= target_ || current_pos >= stop_before_max_) {
-//     digitalWrite(downRelayPin_, LOW);
-//     ESP_LOGI(__FILE__, "Reached max limit");
-//     active_ = false;
-//   } else if (current_pos <= min_length_) {
-//     digitalWrite(downRelayPin_, LOW);
-//     ESP_LOGI(__FILE__, "Reached min limit");
-//     active_ = false;
-//   } else {
-//     digitalWrite(downRelayPin_, HIGH);
-//   }
-// }
 void ChainController::control(float current_pos) {
     if (state_ == ChainState::IDLE) return;
 
@@ -180,3 +166,5 @@ void ChainController::updateTimeout(float distance, float speed) {
     move_timeout_ = expected_time_ms + 5000; // 5s buffer
     ESP_LOGI(__FILE__, "updateTimeout(): duration=%lu ms", move_timeout_);
 }
+
+

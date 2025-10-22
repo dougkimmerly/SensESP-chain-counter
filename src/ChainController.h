@@ -5,6 +5,8 @@
 #include <Arduino.h> 
 #include "sensesp/transforms/linear.h"
 #include "sensesp_app.h"
+#include "sensesp/signalk/signalk_value_listener.h"
+#include <atomic>
 
 
 enum class ChainState {
@@ -23,8 +25,9 @@ public:
         int downRelayPin,
         int upRelayPin
     );
-    void startDrop(float amount);
-    void startRaise(float amount);
+    void lowerAnchor(float amount);
+    void raiseAnchor(float amount);
+
     void stop();
     bool isActive() const; 
     void control(float current_pos);
@@ -47,6 +50,7 @@ private:
     float move_distance_= 0.0;        
     float move_speed_ms_per_m_;   
     unsigned long move_timeout_; 
+    std::atomic<bool> autoActive{false};
 
     void updateTimeout(float, float); 
     
