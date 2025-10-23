@@ -414,13 +414,7 @@ void setup() {
     "raiseXX"    - starts raising the anchor by XX meters, e.g. "raise10" or "raise 10"
                     raises the anchor by 10 meters
     "lowerXX"    - starts lowering the anchor by XX meters e.g. "lower10" or "lower 10" 
-                    lowers the anchor by 10 meters
-    "autoRaise"  - (not implemented yet)starts raising the anchor fully until the minimum chain length is reached
-                    this uses the depth and distance to bow to calculate the slack
-                    in the chain and when to stop it will try up to 10 times to reach 
-                    the fully raised position
-    "autoPayout" -  (not implemented yet)starts lowering the anchor to a scope
-                    
+                    lowers the anchor by 10 meters                
     "STOP"       - stops any movement in progress (since every command stops movement first,
                     anything not defined here will just stop the windlass)
 
