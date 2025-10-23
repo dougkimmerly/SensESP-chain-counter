@@ -59,7 +59,7 @@ Replace `<your_signalk_server>` with your Signal K server URL.
 - Commands can be sent via Signal K as updates to `navigation.anchor.command`.
 
 #### Commands supported:
-- `"drop"`: Initiates the initial drop of the anchor, lowering it until the depth plus 4 meters.  
+- `"drop"`: Initiates the initial drop of the anchor, lowering it to the current depth (environment.depth.belowSurface) plus 4 meters.  
   > **Note:** This "drop" is intended for the initial anchor deployment. The 4-meter additional slack accounts for the bow height (approximately 2 meters) and an initial chain on the seabed (another 2 meters), ensuring the anchor is ready to set.
 - `"raiseXX"`: Raises the anchor by XX meters (e.g., `"raise10"`).
 - `"lowerXX"`: Lowers the anchor by XX meters (e.g., `"lower10"`).
