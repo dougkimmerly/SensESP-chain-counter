@@ -16,18 +16,21 @@
 #include "sensesp/signalk/signalk_value_listener.h"
 #include "sensesp/types/position.h"
 #include "ChainController.h"
+#include "DeploymentManager.h"
 
 using namespace sensesp;
 
 bool ignore_input = true;
 
 ChainController* chainController;
+DeploymentManager* deploymentManager = nullptr;
 
 /* Prepare application */
 void setup() {
   SetupLogging();
   SensESPAppBuilder builder;
   sensesp_app = builder.set_hostname("ChainCounter")
+                    ->enable_ota("transport")
                     ->get_app();
   static reactesp::Event* buttonDelayPtr = nullptr;
   static reactesp::Event* commandDelayPtr = nullptr;
@@ -117,7 +120,7 @@ void setup() {
     ->set_description("GPIO number connected to DOWN Button relay")
     ->set_sort_order(1135);   
   ConfigItem(di2_dtime_config)
-    ->set_title("Debounce Time for UP button")
+    ->set_title("Debounce Time for DOWN button")
     ->set_description("Debounce time in ms for DOWN Button relay")
     ->set_sort_order(1250);
   ConfigItem(di3_gpio_config)
@@ -316,7 +319,7 @@ void setup() {
 
       } else {
         if(current_value + gypsy_circum > max_chain) {
-            ESP_LOGI(__FILE__, "Already at the Max %0fm Chain Length", max_chain);
+            ESP_LOGI(__FILE__, "Already at the Max %fm Chain Length", max_chain);
         } else {
             accumulator->set(1);
             ESP_LOGI(__FILE__, "Increment Deployed Chain");
@@ -365,6 +368,8 @@ void setup() {
     dnRelayPin,
     upRelayPin
   );
+
+
 // Create a feedback connection from the accumulator to the chainController
 // so that it can monitor the current chain length and stop movement at limits
   auto* feedback = new sensesp::LambdaConsumer<float>(
@@ -386,6 +391,11 @@ void setup() {
                               2000,
                               "/distance/sk");
 
+  deploymentManager = new DeploymentManager(
+    chainController,
+    distanceListener,
+    depthListener
+  );
 
 // Set up SKOutput so that we can then receive anchor commands
 // on this path
@@ -437,12 +447,12 @@ void setup() {
         float drop_depth = depthListener->get() + 4.0; // add 4m to the depth for slack chain on bottom
         chainController->lowerAnchor(drop_depth);
         unsigned long moveTime = chainController->getTimeout();
-        commandDelayPtr = event_loop()->onDelay(moveTime, [moveTime]() {
+         commandDelayPtr = event_loop()->onDelay(moveTime, [moveTime]() {
           ESP_LOGI(__FILE__, "movement timeout reached, stopping chain %1u s", moveTime);
           chainController->stop();
           commandDelayPtr=nullptr;
         });
-    } 
+    }
     if (input.startsWith("raise")) {
         int spaceIndex = input.indexOf(' ');
         float raise_amount = 0;
@@ -491,6 +501,24 @@ void setup() {
             commandDelayPtr = nullptr;
         });
     }
+    if(input == "autoDrop") {
+      deploymentManager->start();
+      // commandDelayPtr = event_loop()->onDelay(1800000, []() {
+      //   chainController->stop();
+      //   deploymentManager->stop();
+      //   commandDelayPtr = nullptr;
+      // });
+    }
+    if (input == "stop") {
+        chainController->stop(); 
+        deploymentManager->stop(); 
+        commandDelayPtr = nullptr;
+    }
+    
+
+
+
+
 
   }));
 

@@ -70,8 +70,8 @@ void ChainController::control(float current_pos) {
 
     switch (state_) {
         case ChainState::LOWERING:
-        ESP_LOGI(__FILE__, "control() called, start_time=%lu, start_pos=%f", 
-         movement_start_time_, start_position_);
+        // ESP_LOGI(__FILE__, "control() called, start_time=%lu, start_pos=%f", 
+        //  movement_start_time_, start_position_);
             if (current_pos >= target_ || current_pos >= stop_before_max_) {
                 digitalWrite(downRelayPin_, LOW);
                 calcSpeed(movement_start_time_, start_position_);
@@ -156,7 +156,7 @@ void ChainController::calcSpeed(unsigned long start_time, float start_position) 
 
         // Save new speed in preferences
         saveSpeedsToPrefs();
-        movement_start_time_= 0,0;
+        movement_start_time_= 0.0;
         start_position_ = 0.0;
         ESP_LOGI(__FILE__, "Updated speed: %f ms/m", *target_speed);
     }
@@ -167,4 +167,6 @@ void ChainController::updateTimeout(float distance, float speed) {
     ESP_LOGI(__FILE__, "updateTimeout(): duration=%lu ms", move_timeout_);
 }
 
-
+float ChainController::getChainLength() const {
+    return accumulator_->get();
+}
