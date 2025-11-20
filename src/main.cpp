@@ -67,6 +67,7 @@ void setup() {
   String max_chain_config_path    = "/chain/max_length";
   String upRelay_config_path     = "/di5/gpio";
   String dnRelay_config_path     = "/di6/gpio"; 
+  
 
 
   /* Register config parameters */
@@ -380,22 +381,22 @@ void setup() {
 // initialize up and down speeds from preferences
   chainController->loadSpeedsFromPrefs();
 
-// Listen to the depth to know how much chain to use on initial drop
-  auto* depthListener = 
-  new SKValueListener<float>("environment.depth.belowSurface",
-                              2000,
-                              "/depth/sk");
-// Listen to the distance for use in calculations
-  auto* distanceListener = 
-  new SKValueListener<float>("navigation.anchor.distanceFromBow",
-                              2000,
-                              "/distance/sk");
-
   deploymentManager = new DeploymentManager(
-    chainController,
-    distanceListener,
-    depthListener
+    chainController
   );
+  
+  auto slackChain = new SKOutputFloat(
+    "navigation.anchor.chainSlack",
+    "/slack/sk",
+    new SKMetadata("m", "Anchor Chain Slack", "Chain Slack", "Slack")
+  );
+  chainController->getHorizontalSlackObservable()->connect_to(slackChain);
+  auto* slack_update_timer = new RepeatSensor<bool>(500, []() -> bool {
+    chainController->calculateAndPublishHorizontalSlack();
+    return true;
+  });
+
+
 
 // Set up SKOutput so that we can then receive anchor commands
 // on this path
@@ -430,7 +431,7 @@ void setup() {
 
   */
   command_listener->connect_to(new LambdaConsumer<String>( [
-     depthListener, dnRelayPin, upRelayPin, accumulator, distanceListener
+    dnRelayPin, upRelayPin, accumulator
      ](String input) {
 
       ESP_LOGI(__FILE__, "Command received is %s", input.c_str());
@@ -444,7 +445,7 @@ void setup() {
     float chainStart = accumulator->get();
     if(input == "drop") {
         ESP_LOGI(__FILE__, "DROP command received");
-        float drop_depth = depthListener->get() + 4.0; // add 4m to the depth for slack chain on bottom
+        float drop_depth = chainController->getDepthListener()->get() + 4.0; // add 4m to the depth for slack chain on bottom
         chainController->lowerAnchor(drop_depth);
         unsigned long moveTime = chainController->getTimeout();
          commandDelayPtr = event_loop()->onDelay(moveTime, [moveTime]() {

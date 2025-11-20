@@ -10,9 +10,7 @@
 class DeploymentManager {
 public:
   // Constructor
-  DeploymentManager(ChainController* chainCtrl,
-                    sensesp::ValueProducer<float>* distanceListener,
-                    sensesp::ValueProducer<float>* depthListener);
+  DeploymentManager(ChainController* chainCtrl);
   
   // Public methods to control the deployment sequence
   void strBoatSpeed();    // Start the staged deployment process (begin speed measurement)
@@ -26,8 +24,6 @@ public:
 private:
   // References to core objects
   ChainController* chainController;
-  sensesp::ValueProducer<float>* distanceListener;
-  sensesp::ValueProducer<float>* depthListener;
 
   // Stage enumeration for finite-state machine
   enum Stage {
@@ -67,6 +63,8 @@ private:
   float ewmaDistance = 0.0; // Smoothed distance
   static constexpr float distance_alpha = 0.1; 
   float lastRawDistanceForEWMA = 0.0;
+  float _lastDistanceAtDeploymentCommand = 0.0;
+  float _accumulatedDeployDemand = 0.0;
 
   // distance variables
   float anchorDepth;                  // Depth when deployment starts
@@ -79,19 +77,22 @@ private:
   float chain75 = 0.75 * totalChainLength;
   bool _commandIssuedInCurrentDeployStage = false;
 
+  const float MIN_DEPLOY_THRESHOLD_M = 1.0;
+  const unsigned long DECISION_WINDOW_MS = 1000;
+
   // Event handle for periodic update
   reactesp::Event* updateEvent = nullptr;
   reactesp::Event* speedUpdateEvent = nullptr;
+  reactesp::Event* deployPulseEvent = nullptr;
 
   // Private helper methods
   void startSpeedMeasurement();             // Initiate background speed calculation
   void stopSpeedMeasurement();              // Stop speed background task
   float getCurrentSpeed();                  // Retrieve smoothed speed
   float computeTargetHorizontalDistance(float chainLength, float anchorDepth);
-  // void waitUntilChainTight(float targetDistance, std::function<void()> onTightReached);
-  // void controlledChainDeployment(float target);
   float currentStageTargetLength = 0.0;
-  void transitionTo(Stage nextStage);     
+  void transitionTo(Stage nextStage); 
+  void startDeployPulse(float stageTargetChainLength);    
   
   // Stage transition handler
   void onStageAdvance();                    // Advance to next stage
