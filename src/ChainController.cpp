@@ -194,7 +194,7 @@ void ChainController::loadSpeedsFromPrefs() {
         upSpeed_ = prefs.getFloat("upSpeed", 1000.0);    // default 1000 ms/m
         downSpeed_ = prefs.getFloat("downSpeed", 1000.0);
         prefs.end();
-        ESP_LOGI(__FILE__, "Loaded speeds from prefs: upSpeed=%.2f ms/m, downSpeed=%.2f ms/m", upSpeed_, downSpeed_);
+        // ESP_LOGI(__FILE__, "Loaded speeds from prefs: upSpeed=%.2f ms/m, downSpeed=%.2f ms/m", upSpeed_, downSpeed_);
     } else {
         // If begin() fails, we skip loading; keep defaults
         ESP_LOGW(__FILE__, "Preferences could not be opened for reading speeds.");
@@ -207,7 +207,7 @@ void ChainController::saveSpeedsToPrefs() {
         prefs.putFloat("upSpeed", upSpeed_);
         prefs.putFloat("downSpeed", downSpeed_);
         prefs.end();
-        ESP_LOGI(__FILE__, "Saved speeds to prefs: upSpeed=%.2f ms/m, downSpeed=%.2f ms/m", upSpeed_, downSpeed_);
+        // ESP_LOGI(__FILE__, "Saved speeds to prefs: upSpeed=%.2f ms/m, downSpeed=%.2f ms/m", upSpeed_, downSpeed_);
     } else {
         ESP_LOGE(__FILE__, "Preferences could not be opened for writing speeds.");
     }
@@ -236,8 +236,8 @@ void ChainController::calcSpeed(unsigned long start_time, float start_position) 
             // Exponential smoothing
             *target_speed_ptr = smoothing_factor_ * raw_speed_ms_per_m + (1 - smoothing_factor_) * (*target_speed_ptr);
             saveSpeedsToPrefs();
-            ESP_LOGI(__FILE__, "Updated %s speed: %.2f ms/m (raw %.2f ms/m)",
-                     (state_ == ChainState::LOWERING ? "down" : "up"), *target_speed_ptr, raw_speed_ms_per_m);
+            // ESP_LOGI(__FILE__, "Updated %s speed: %.2f ms/m (raw %.2f ms/m)",
+            //          (state_ == ChainState::LOWERING ? "down" : "up"), *target_speed_ptr, raw_speed_ms_per_m);
         }
     }
     // Reset for next movement
@@ -250,12 +250,12 @@ void ChainController::updateTimeout(float distance, float speed_ms_per_m) {
     if (speed_ms_per_m > 0.01 && distance > 0.01) {
         unsigned long expected_time_ms = (unsigned long)(distance * speed_ms_per_m);
         move_timeout_ = expected_time_ms + 5000; // 5s buffer
-        ESP_LOGI(__FILE__, "updateTimeout(): Expected duration=%.0f ms (for %.2f m at %.2f ms/m). Actual timeout set to %lu ms.",
-                 (float)expected_time_ms, distance, speed_ms_per_m, move_timeout_);
+        // ESP_LOGI(__FILE__, "updateTimeout(): Expected duration=%.0f ms (for %.2f m at %.2f ms/m). Actual timeout set to %lu ms.",
+        //          (float)expected_time_ms, distance, speed_ms_per_m, move_timeout_);
     } else {
         move_timeout_ = 10000; // Default timeout if speed/distance are invalid (e.g., 10 seconds)
-        ESP_LOGW(__FILE__, "updateTimeout(): Invalid speed (%.2f ms/m) or distance (%.2f m) for timeout calculation. Using default %lu ms.",
-                 speed_ms_per_m, distance, move_timeout_);
+        // ESP_LOGW(__FILE__, "updateTimeout(): Invalid speed (%.2f ms/m) or distance (%.2f m) for timeout calculation. Using default %lu ms.",
+        //          speed_ms_per_m, distance, move_timeout_);
     }
 }
 
@@ -272,7 +272,7 @@ float ChainController::getCurrentDepth() const {
     float depth = depthListener_->get(); 
     // If the listener has never received a value, or returns NaN/Inf/a very small number
     if (isnan(depth) || isinf(depth) || depth <= 0.01) { // Consider 0.01 as effectively zero for depth
-        ESP_LOGD(__FILE__, "ChainController: getCurrentDepth() returning 0.0, depthListener has no valid data (%.2f).", depth);
+        // ESP_LOGD(__FILE__, "ChainController: getCurrentDepth() returning 0.0, depthListener has no valid data (%.2f).", depth);
         return 0.0;
     }
     return depth;
@@ -282,7 +282,7 @@ float ChainController::getCurrentDistance() const {
     float distance = distanceListener_->get(); // Get the current value
     // If the listener has never received a value, or returns NaN/Inf/a very small number
     if (isnan(distance) || isinf(distance) || distance <= 0.01) { // Consider 0.01 as effectively zero for distance
-        ESP_LOGD(__FILE__, "ChainController: getCurrentDistance() returning 0.0, distanceListener has no valid data (%.2f).", distance);
+        // ESP_LOGD(__FILE__, "ChainController: getCurrentDistance() returning 0.0, distanceListener has no valid data (%.2f).", distance);
         return 0.0;
     }
     return distance;
@@ -293,7 +293,7 @@ void ChainController::calculateAndPublishHorizontalSlack() {
     float current_depth = getCurrentDepth();
     float current_distance = getCurrentDistance();
 
-    ESP_LOGD(__FILE__, "SLACK CALC DEBUG: Inputs: Chain=%.2f, Depth=%.2f, Dist=%.2f", current_chain, current_depth, current_distance);
+    // ESP_LOGD(__FILE__, "SLACK CALC DEBUG: Inputs: Chain=%.2f, Depth=%.2f, Dist=%.2f", current_chain, current_depth, current_distance);
 
     float calculated_slack = 0.0; // Initialize for final result
     float horizontal_distance_taut = 0.0; // Initialize
@@ -301,7 +301,7 @@ void ChainController::calculateAndPublishHorizontalSlack() {
     // --- Start Robust Validation for Input Data Sanity (not physical impossibility for the slack value itself) ---
     // If any input is essentially zero or invalid, we cannot compute meaningful slack.
     if (current_chain <= 0.01 || current_depth <= 0.01 || current_distance <= 0.01 || isnan(current_chain) || isinf(current_chain) || isnan(current_depth) || isinf(current_depth) || isnan(current_distance) || isinf(current_distance)) {
-        ESP_LOGW(__FILE__, "ChainController: Invalid (zero/NaN/Inf) inputs for slack calculation. Chain=%.2f, Depth=%.2f, Dist=%.2f. Setting slack to 0.0.", current_chain, current_depth, current_distance);
+        // ESP_LOGW(__FILE__, "ChainController: Invalid (zero/NaN/Inf) inputs for slack calculation. Chain=%.2f, Depth=%.2f, Dist=%.2f. Setting slack to 0.0.", current_chain, current_depth, current_distance);
         calculated_slack = 0.0;
     }
     // --- End Robust Validation for Input Data Sanity ---
@@ -317,19 +317,19 @@ void ChainController::calculateAndPublishHorizontalSlack() {
 
         // Check for NaN/Inf in the final result (should be caught earlier, but defensive check)
         if (isnan(calculated_slack) || isinf(calculated_slack)) {
-             ESP_LOGE(__FILE__, "ChainController: Slack calculated as NaN/Inf despite sane inputs. Chain=%.2f, Depth=%.2f, Dist=%.2f. Setting slack to 0.0.", current_chain, current_depth, current_distance);
+            //  ESP_LOGE(__FILE__, "ChainController: Slack calculated as NaN/Inf despite sane inputs. Chain=%.2f, Depth=%.2f, Dist=%.2f. Setting slack to 0.0.", current_chain, current_depth, current_distance);
              calculated_slack = 0.0;
         }
-        ESP_LOGD(__FILE__, "SLACK CALC DEBUG: TautHorizDist (based on Chain): %.2f m", horizontal_distance_taut);
-        ESP_LOGD(__FILE__, "SLACK CALC DEBUG: Calculated Slack (TautHorizDist - Dist): %.2f m", calculated_slack);
+        // ESP_LOGD(__FILE__, "SLACK CALC DEBUG: TautHorizDist (based on Chain): %.2f m", horizontal_distance_taut);
+        // ESP_LOGD(__FILE__, "SLACK CALC DEBUG: Calculated Slack (TautHorizDist - Dist): %.2f m", calculated_slack);
     }
 
     // --- Update the ObservableValue (only if significantly changed) ---
     if (fabs(horizontalSlack_->get() - calculated_slack) > 0.01) { // 1cm tolerance
         horizontalSlack_->set(calculated_slack);
-        ESP_LOGD(__FILE__, "ChainController: Horizontal Slack ObservableValue set to %.2f m", calculated_slack);
+        // ESP_LOGD(__FILE__, "ChainController: Horizontal Slack ObservableValue set to %.2f m", calculated_slack);
     } else {
-        ESP_LOGD(__FILE__, "ChainController: Horizontal Slack calculated (%.2f m) but no significant change. Not updating observable.", calculated_slack);
+        // ESP_LOGD(__FILE__, "ChainController: Horizontal Slack calculated (%.2f m) but no significant change. Not updating observable.", calculated_slack);
     }
 }
 

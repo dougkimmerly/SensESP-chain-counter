@@ -24,6 +24,7 @@ public:
 private:
   // References to core objects
   ChainController* chainController;
+  sensesp::SKValueListener<float>* windSpeedListener_;  // Apparent wind speed listener
 
   // Stage enumeration for finite-state machine
   enum Stage {
@@ -49,10 +50,7 @@ private:
   // Timing and deployment parameters
   float targetDropDepth = 0.0;        // Target depth for initial drop
   float totalChainLength = 0.0;       // Total chain length to deploy
-  float targetTightDistance = 0.0;    // Horiz distance for tight chain
   unsigned long stageStartTime = 0;   // For timing hold periods
-  unsigned long holdDurationMs = 0;   // Hold duration
-  float currentTargetChainLength = 0.0; // Current target chain length
 
   // Speed measurement members
   float ewmaSpeed = 0.0;
@@ -68,13 +66,12 @@ private:
 
   // distance variables
   float anchorDepth;                  // Depth when deployment starts
-  float targetChainLength;            // Total chain to deploy
+  float targetChainLength;            // Total chain to deploy (duplicate of totalChainLength - consider consolidating)
   float targetDistanceInit;           // distance for initial drop (probably just targetDropDepth + slack)
   float targetDistance30;             // Horizontal distance for 30% chain
   float targetDistance75;             // Horizontal distance for 75%
-  float targetDistance100; 
-  float chain30 = 0.3 * totalChainLength;
-  float chain75 = 0.75 * totalChainLength;
+  float chain30;                      // Actual chain length at 30% deployment
+  float chain75;                      // Actual chain length at 75% deployment
   bool _commandIssuedInCurrentDeployStage = false;
 
   const float MIN_DEPLOY_THRESHOLD_M = 1.0;
@@ -90,9 +87,20 @@ private:
   void stopSpeedMeasurement();              // Stop speed background task
   float getCurrentSpeed();                  // Retrieve smoothed speed
   float computeTargetHorizontalDistance(float chainLength, float anchorDepth);
+  float computeCatenaryReductionFactor(float chainLength, float anchorDepth, float horizontalForce);
+  float estimateHorizontalForce();  // Estimate force from wind/current
   float currentStageTargetLength = 0.0;
-  void transitionTo(Stage nextStage); 
-  void startDeployPulse(float stageTargetChainLength);    
+  void transitionTo(Stage nextStage);
+  void startDeployPulse(float stageTargetChainLength);
+
+  // Chain physical constants (10mm galvanized)
+  static constexpr float CHAIN_WEIGHT_PER_METER_KG = 2.2;  // kg/m in water (adjusted for buoyancy)
+  static constexpr float GRAVITY = 9.81;                    // m/s²
+
+  // Boat physical constants (adjust these for your boat)
+  static constexpr float BOAT_WINDAGE_AREA_M2 = 15.0;      // m² - effective windage area (typical 10m sailboat)
+  static constexpr float AIR_DENSITY = 1.225;               // kg/m³ at sea level
+  static constexpr float DRAG_COEFFICIENT = 1.2;           // typical for boat hull + rigging    
   
   // Stage transition handler
   void onStageAdvance();                    // Advance to next stage

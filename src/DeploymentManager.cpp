@@ -8,10 +8,21 @@ DeploymentManager::DeploymentManager(ChainController* chainCtrl)
     currentStage(IDLE),
     isRunning(false),
     dropInitiated(false),
-    updateEvent(nullptr), 
+    updateEvent(nullptr),
     speedUpdateEvent(nullptr),
-    ewmaDistance(0.0), 
-    lastRawDistanceForEWMA(0.0) {}
+    ewmaDistance(0.0),
+    lastRawDistanceForEWMA(0.0) {
+
+  // Initialize wind speed listener for catenary calculations
+  // Using apparent wind speed which is what the boat experiences at anchor
+  windSpeedListener_ = new sensesp::SKValueListener<float>(
+    "environment.wind.speedApparent",  // Signal K path for apparent wind speed (m/s)
+    2000,                               // Update interval: 2000ms
+    "/wind/sk"                          // Config path
+  );
+
+  ESP_LOGI(__FILE__, "DeploymentManager: Wind speed listener initialized");
+}
 
 void DeploymentManager::strBoatSpeed() {
   startSpeedMeasurement();
@@ -29,11 +40,21 @@ void DeploymentManager::start() {
   targetDropDepth = currentDepth + 4.0; // initial slack
   anchorDepth = targetDropDepth - 2.0;          // anchor depth
   totalChainLength = 5 * (targetDropDepth - 2);
-  chain30 = 0.3 * totalChainLength;
-  chain75 = 0.75 * totalChainLength;
+  chain30 = 0.40 * totalChainLength;
+  chain75 = 0.80 * totalChainLength;
+
+  // Get dynamic horizontal force estimate from wind conditions
+  float estimatedHorizontalForce = estimateHorizontalForce();
+
+  // Calculate catenary-adjusted distances using physics-based model
   targetDistanceInit = computeTargetHorizontalDistance(targetDropDepth, anchorDepth);
-  targetDistance30 = computeTargetHorizontalDistance(chain30, anchorDepth) * 0.95; // reduction factor
-  targetDistance75 = computeTargetHorizontalDistance(chain75, anchorDepth) * 0.95; // reduction factor  
+  float reductionFactor30 = computeCatenaryReductionFactor(chain30, anchorDepth, estimatedHorizontalForce);
+  float reductionFactor75 = computeCatenaryReductionFactor(chain75, anchorDepth, estimatedHorizontalForce);
+  targetDistance30 = computeTargetHorizontalDistance(chain30, anchorDepth) * reductionFactor30;
+  targetDistance75 = computeTargetHorizontalDistance(chain75, anchorDepth) * reductionFactor75;
+
+  ESP_LOGI(__FILE__, "DeploymentManager: Catenary calcs - Force: %.0fN, Factor30: %.3f, Factor75: %.3f",
+           estimatedHorizontalForce, reductionFactor30, reductionFactor75);  
 
     if (totalChainLength < 10.0) { 
       ESP_LOGW(__FILE__, "DeploymentManager: Calculated totalChainLength (%.2f m) is too small. Capping at 10.0 m.", totalChainLength);
@@ -143,6 +164,94 @@ float DeploymentManager::computeTargetHorizontalDistance(float chainLength, floa
   return sqrt(pow(chainLength, 2) - pow(anchorDepth, 2));
 }
 
+float DeploymentManager::estimateHorizontalForce() {
+  // Estimate horizontal force on the boat from wind
+  // This combines wind drag force with a baseline for current/resistance
+
+  float windSpeed = windSpeedListener_->get(); // m/s from Signal K
+
+  // Validate wind speed data - if invalid, use 10 knots as default
+  if (isnan(windSpeed) || isinf(windSpeed) || windSpeed < 0.0) {
+    windSpeed = 10.0 / 1.944; // 10 knots converted to m/s (~5.14 m/s)
+    ESP_LOGW(__FILE__, "Invalid wind speed data. Using default: 10 knots (%.2f m/s)", windSpeed);
+  }
+
+  // Wind force formula: F = 0.5 * ρ * Cd * A * v²
+  // where: ρ = air density, Cd = drag coefficient, A = windage area, v = wind speed
+  float windForce = 0.5 * AIR_DENSITY * DRAG_COEFFICIENT * BOAT_WINDAGE_AREA_M2 * pow(windSpeed, 2);
+
+  // Add baseline force for current and hull resistance (typically 20-50N)
+  float baselineForce = 30.0;
+
+  float totalForce = windForce + baselineForce;
+
+  // Clamp to reasonable bounds (min 30N, max 2000N for safety)
+  totalForce = fmax(30.0, fmin(2000.0, totalForce));
+
+  ESP_LOGD(__FILE__, "Force estimate: wind=%.1f m/s (%.1f knots), windForce=%.0fN, total=%.0fN",
+           windSpeed, windSpeed * 1.944, windForce, totalForce);
+
+  return totalForce;
+}
+
+float DeploymentManager::computeCatenaryReductionFactor(float chainLength, float anchorDepth, float horizontalForce) {
+  // This function calculates the reduction factor due to chain catenary
+  // Based on catenary curve physics with chain weight and horizontal tension
+  //
+  // KEY PHYSICS:
+  // - LOW force (light wind) → MORE sag → LESS horizontal distance → LOWER reduction factor
+  // - HIGH force (strong wind) → LESS sag → MORE horizontal distance → HIGHER reduction factor
+
+  // Chain weight per meter in water (N/m)
+  float w = CHAIN_WEIGHT_PER_METER_KG * GRAVITY;
+
+  // If horizontal force is very small, there's significant sag
+  if (horizontalForce < 50.0) {
+    // Light wind/current: LOTS of catenary sag (low tension)
+    // Lower reduction factors = more sag = less horizontal distance
+    float scopeRatio = chainLength / fmax(anchorDepth, 1.0);
+    if (scopeRatio < 3.0) {
+      return 0.90;  // Significant sag even on short scope
+    } else if (scopeRatio < 5.0) {
+      return 0.85;  // More sag on typical scope
+    } else {
+      return 0.80;  // Lots of sag on long scope
+    }
+  }
+
+  // Calculate catenary parameter: a = H/w
+  // where H is horizontal tension at anchor, w is weight per unit length
+  float a = horizontalForce / w;
+
+  // For a catenary with horizontal force H and vertical drop of anchorDepth,
+  // the relationship is complex. Using approximation for moderate sag:
+  // horizontal_distance ≈ sqrt(chainLength² - anchorDepth²) - (w * chainLength²)/(8*H)
+  //
+  // The sag reduction term (w * L²)/(8*H) gets SMALLER as H increases (tighter chain)
+
+  // Calculate theoretical straight-line horizontal distance
+  float straightLineDistance = sqrt(pow(chainLength, 2) - pow(anchorDepth, 2));
+
+  // Calculate catenary sag reduction (horizontal distance lost to sag)
+  // This gets SMALLER with higher force (less sag when chain is pulled tight)
+  float catenarySagReduction = (w * pow(chainLength, 2)) / (8.0 * horizontalForce);
+
+  // Actual horizontal distance accounting for catenary
+  float actualHorizontalDistance = straightLineDistance - catenarySagReduction;
+
+  // Reduction factor is the ratio
+  // Higher force → smaller sag reduction → higher actual distance → higher factor
+  float reductionFactor = actualHorizontalDistance / straightLineDistance;
+
+  // Clamp between reasonable bounds (0.80 to 0.99)
+  reductionFactor = fmax(0.80, fmin(0.99, reductionFactor));
+
+  ESP_LOGD(__FILE__, "Catenary calc: chainLen=%.2f, depth=%.2f, force=%.0fN, a=%.2f, sagReduction=%.2f, factor=%.3f",
+           chainLength, anchorDepth, horizontalForce, a, catenarySagReduction, reductionFactor);
+
+  return reductionFactor;
+}
+
 void DeploymentManager::startDeployPulse(float stageTargetChainLength) {
     // If a pulse event is already scheduled, it means this call is from updateDeployment()
     // or a previous pulse setting up the next. Remove any existing to ensure a fresh schedule.
@@ -162,12 +271,29 @@ void DeploymentManager::startDeployPulse(float stageTargetChainLength) {
             return; // Exit this lambda, no further pulse scheduled
         }
 
+        // Validate that the captured target still matches the current stage target
+        float current_stage_target = 0.0;
+        if (currentStage == DEPLOY_30) {
+            current_stage_target = chain30;
+        } else if (currentStage == DEPLOY_75) {
+            current_stage_target = chain75;
+        } else if (currentStage == DEPLOY_100) {
+            current_stage_target = totalChainLength;
+        }
+
+        // If the captured target doesn't match the current stage, the stage transitioned
+        if (fabs(stageTargetChainLength - current_stage_target) > 0.01) {
+            ESP_LOGW(__FILE__, "Deploy Pulse: Stage transition detected (target mismatch: %.2f vs %.2f). Stopping stale pulse.", stageTargetChainLength, current_stage_target);
+            deployPulseEvent = nullptr;
+            return;
+        }
+
         float current_boat_speed_mps = this->getCurrentSpeed(); // m/s (from EWMA)
         float current_chain_length = this->chainController->getChainLength();
         float windlass_deployment_rate_mps = 1000.0 / this->chainController->getDownSpeed(); // m/s (from ChainController's calibrated speed)
         float current_horizontal_slack = this->chainController->getHorizontalSlackObservable()->get();
         float current_depth = this->chainController->getCurrentDepth();
-        float dynamic_max_acceptable_slack = current_depth * .5; 
+        float dynamic_max_acceptable_slack = current_depth * .5;
 
 
 
@@ -180,7 +306,9 @@ void DeploymentManager::startDeployPulse(float stageTargetChainLength) {
         // If ChainController is currently moving, we MUST wait for it to finish.
         if (this->chainController->isActive()) {
             ESP_LOGD(__FILE__, "Deploy Pulse: ChainController is active. Rescheduling pulse in %lu ms.", DECISION_WINDOW_MS);
-            deployPulseEvent = sensesp::event_loop()->onDelay(DECISION_WINDOW_MS, std::bind(&DeploymentManager::startDeployPulse, this, stageTargetChainLength));
+            deployPulseEvent = sensesp::event_loop()->onDelay(DECISION_WINDOW_MS, [this, stageTargetChainLength]() {
+                startDeployPulse(stageTargetChainLength);
+            });
             return;
         }
 
@@ -255,12 +383,11 @@ void DeploymentManager::startDeployPulse(float stageTargetChainLength) {
         }
 
         ESP_LOGD(__FILE__, "Deploy Pulse: Next pulse scheduled in %lu ms.", next_pulse_delay_ms);
-        deployPulseEvent = sensesp::event_loop()->onDelay(next_pulse_delay_ms, std::bind(&DeploymentManager::startDeployPulse, this, stageTargetChainLength));
+        deployPulseEvent = sensesp::event_loop()->onDelay(next_pulse_delay_ms, [this, stageTargetChainLength]() {
+            startDeployPulse(stageTargetChainLength);
+        });
     });
 }
-
-
-
 
 void DeploymentManager::updateDeployment() {
   if (!isRunning) {
