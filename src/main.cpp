@@ -17,6 +17,7 @@
 #include "sensesp/types/position.h"
 #include "ChainController.h"
 #include "DeploymentManager.h"
+#include "RetrievalManager.h"
 
 using namespace sensesp;
 
@@ -24,6 +25,7 @@ bool ignore_input = true;
 
 ChainController* chainController;
 DeploymentManager* deploymentManager = nullptr;
+RetrievalManager* retrievalManager = nullptr;
 
 /* Prepare application */
 void setup() {
@@ -384,7 +386,11 @@ void setup() {
   deploymentManager = new DeploymentManager(
     chainController
   );
-  
+
+  retrievalManager = new RetrievalManager(
+    chainController
+  );
+
   auto slackChain = new SKOutputFloat(
     "navigation.anchor.chainSlack",
     "/slack/sk",
@@ -510,9 +516,14 @@ void setup() {
       //   commandDelayPtr = nullptr;
       // });
     }
+    if(input == "autoRetrieve") {
+      ESP_LOGI(__FILE__, "AUTO-RETRIEVE command received");
+      retrievalManager->start();
+    }
     if (input == "stop") {
-        chainController->stop(); 
-        deploymentManager->stop(); 
+        chainController->stop();
+        deploymentManager->stop();
+        retrievalManager->stop();
         commandDelayPtr = nullptr;
     }
     
