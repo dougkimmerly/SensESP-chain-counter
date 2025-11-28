@@ -74,8 +74,8 @@ private:
   float chain75;                      // Actual chain length at 75% deployment
   bool _commandIssuedInCurrentDeployStage = false;
 
-  const float MIN_DEPLOY_THRESHOLD_M = 1.0;
-  const unsigned long DECISION_WINDOW_MS = 1000;
+  const float MIN_DEPLOY_THRESHOLD_M = 1.0;   // Realistic 1m chunks
+  const unsigned long DECISION_WINDOW_MS = 500; // Check twice as often for faster response
 
   // Event handle for periodic update
   reactesp::Event* updateEvent = nullptr;
