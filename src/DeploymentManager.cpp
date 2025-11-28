@@ -336,22 +336,11 @@ void DeploymentManager::startDeployPulse(float stageTargetChainLength) {
         bool hasEnoughDemand = (_accumulatedDeployDemand >= MIN_DEPLOY_THRESHOLD_M);
         // Condition 2: Is there excessive positive slack?
         bool hasExcessSlack = (current_horizontal_slack > dynamic_max_acceptable_slack);
-        // Condition 3: Is slack critically low? (boat may be stuck at zero slack)
-        bool isSlackCriticallyLow = (current_horizontal_slack <= 0.3); // m
-        // Condition 4: Is the windlass already active? (Checked above)
 
-        if ((hasEnoughDemand || isSlackCriticallyLow) && !hasExcessSlack) {
-            // Deploy the accumulated amount, OR a minimum amount if slack is critically low
-            if (isSlackCriticallyLow && _accumulatedDeployDemand < MIN_DEPLOY_THRESHOLD_M) {
-                // Boat is stuck at zero/low slack - deploy minimum amount to let it continue drifting
-                actual_deploy_amount = MIN_DEPLOY_THRESHOLD_M;
-                _accumulatedDeployDemand = 0.0;
-                ESP_LOGI(__FILE__, "Deploy Pulse: Slack critically low (%.2f m <= 0.3m) - forcing minimum deployment to prevent deadlock", current_horizontal_slack);
-            } else {
-                // Normal path: deploy the accumulated amount
-                actual_deploy_amount = _accumulatedDeployDemand;
-                _accumulatedDeployDemand = 0.0; // Reset accumulated demand after deploying
-            }
+        if (hasEnoughDemand && !hasExcessSlack) {
+            // Normal path: deploy the accumulated amount
+            actual_deploy_amount = _accumulatedDeployDemand;
+            _accumulatedDeployDemand = 0.0; // Reset accumulated demand after deploying
 
         // Don't overshoot the stage's total target
         float remaining_to_stage_target = stageTargetChainLength - current_chain_length;
