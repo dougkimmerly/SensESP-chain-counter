@@ -298,7 +298,7 @@ void DeploymentManager::startDeployPulse(float stageTargetChainLength) {
 
 
         // --- Deployment Tuning Parameters (can become configurable via SensESP UI) ---
-        const float slack_factor = 1.1; // Multiplier to deploy slightly more chain than boat movement (e.g., 1.1x speed)
+        const float slack_factor = 1.25; // Increased to deploy more aggressively during rapid phases
         const unsigned long decision_window_ms = 500; // How frequently we make a "deploy decision" if windlass is faster than boat
         const float min_deploy_amount_meters = 0.5; // Minimal amount to deploy if boat speed is very low/zero
         const float effectively_stopped_speed_mps = 0.1; // Threshold for boat speed (0.1 m/s = ~0.2 knots)
