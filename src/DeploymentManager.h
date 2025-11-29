@@ -13,18 +13,14 @@ public:
   DeploymentManager(ChainController* chainCtrl);
   
   // Public methods to control the deployment sequence
-  void strBoatSpeed();    // Start the staged deployment process (begin speed measurement)
   void start();           // Begin/restart deployment sequence
   void stop();            // Cancel/deactivate/deployment stop
   void reset();           // Reset internal state for new deployment
   bool isAutoAnchorValid(); // Check if auto anchor deployment is valid
 
-  // float getCurrentSpeed(); // Get smoothed boat speed (m/s)
-
 private:
   // References to core objects
   ChainController* chainController;
-  sensesp::SKValueListener<float>* windSpeedListener_;  // Apparent wind speed listener
 
   // Stage enumeration for finite-state machine
   enum Stage {
@@ -52,17 +48,10 @@ private:
   float totalChainLength = 0.0;       // Total chain length to deploy
   unsigned long stageStartTime = 0;   // For timing hold periods
 
-  // Speed measurement members
-  float ewmaSpeed = 0.0;
-  static constexpr float alpha = 0.3; // EWMA smoothing factor
-  unsigned long lastTime = 0;
-  float lastDistance = 0;
-  bool measuring = false;
-  float ewmaDistance = 0.0; // Smoothed distance
-  static constexpr float distance_alpha = 0.1; 
-  float lastRawDistanceForEWMA = 0.0;
-  float _lastDistanceAtDeploymentCommand = 0.0;
-  float _accumulatedDeployDemand = 0.0;
+  // Slack-based control members
+  float lastSlack_ = 0.0;              // Previous slack value for rate calculation
+  unsigned long lastSlackTime_ = 0;    // Timestamp of last slack measurement
+  float slackRate_ = 0.0;              // Rate of slack change (m/s), negative = decreasing
 
   // distance variables
   float anchorDepth;                  // Depth when deployment starts
@@ -74,34 +63,23 @@ private:
   float chain75;                      // Actual chain length at 75% deployment
   bool _commandIssuedInCurrentDeployStage = false;
 
-  const float MIN_DEPLOY_THRESHOLD_M = 1.0;   // Realistic 1m chunks
+  // Slack-based deployment constants
+  static constexpr float TARGET_SLACK_RATIO = 0.10;                    // Target slack: 10% of deployed chain
+  static constexpr float AGGRESSIVE_SLACK_RATE_THRESHOLD = -0.05;     // -5cm/s = deploy aggressively
+  static constexpr float NORMAL_DEPLOY_INCREMENT = 0.5;               // 0.5m increments normally
+  static constexpr float AGGRESSIVE_DEPLOY_INCREMENT = 1.0;           // 1.0m when slack dropping fast
   const unsigned long DECISION_WINDOW_MS = 500; // Check twice as often for faster response
 
   // Event handle for periodic update
   reactesp::Event* updateEvent = nullptr;
-  reactesp::Event* speedUpdateEvent = nullptr;
   reactesp::Event* deployPulseEvent = nullptr;
 
   // Private helper methods
-  void startSpeedMeasurement();             // Initiate background speed calculation
-  void stopSpeedMeasurement();              // Stop speed background task
-  float getCurrentSpeed();                  // Retrieve smoothed speed
   float computeTargetHorizontalDistance(float chainLength, float anchorDepth);
-  float computeCatenaryReductionFactor(float chainLength, float anchorDepth, float horizontalForce);
-  float estimateHorizontalForce();  // Estimate force from wind/current
   float currentStageTargetLength = 0.0;
   void transitionTo(Stage nextStage);
   void startDeployPulse(float stageTargetChainLength);
 
-  // Chain physical constants (10mm galvanized)
-  static constexpr float CHAIN_WEIGHT_PER_METER_KG = 2.2;  // kg/m in water (adjusted for buoyancy)
-  static constexpr float GRAVITY = 9.81;                    // m/s²
-
-  // Boat physical constants (adjust these for your boat)
-  static constexpr float BOAT_WINDAGE_AREA_M2 = 15.0;      // m² - effective windage area (typical 10m sailboat)
-  static constexpr float AIR_DENSITY = 1.225;               // kg/m³ at sea level
-  static constexpr float DRAG_COEFFICIENT = 1.2;           // typical for boat hull + rigging    
-  
   // Stage transition handler
   void onStageAdvance();                    // Advance to next stage
   void checkConditions();                   // Checks for stage triggers

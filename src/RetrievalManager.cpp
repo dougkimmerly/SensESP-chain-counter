@@ -31,6 +31,9 @@ void RetrievalManager::start() {
   completed_ = false;
   state_ = RetrievalState::CHECKING_SLACK;
 
+  // Initialize timing (allow immediate first raise)
+  lastRaiseTime_ = 0;
+
   ESP_LOGI(__FILE__, "RetrievalManager: Starting auto-retrieve sequence");
 
   // Schedule the periodic update (every 100ms)
@@ -154,14 +157,36 @@ void RetrievalManager::updateRetrieval() {
           transitionTo(RetrievalState::RAISING);
         }
       } else {
-        // Slack-based retrieval phase
-        if (slack >= SLACK_THRESHOLD_M) {
-          ESP_LOGI(__FILE__, "RetrievalManager: Slack available (%.2fm), raising chain", slack);
-          chainController->raiseAnchor(slack);
-          transitionTo(RetrievalState::RAISING);
+        // Slack-based retrieval phase with hysteresis and minimum raise
+        unsigned long now = millis();
+        unsigned long timeSinceLastRaise = now - lastRaiseTime_;
+
+        // Only consider raising if enough time has passed since last raise
+        if (timeSinceLastRaise < COOLDOWN_AFTER_RAISE_MS) {
+          ESP_LOGD(__FILE__, "RetrievalManager: In cooldown period (%.1fs remaining)",
+                   (COOLDOWN_AFTER_RAISE_MS - timeSinceLastRaise) / 1000.0);
+          transitionTo(RetrievalState::WAITING_FOR_SLACK);
+        }
+        // Check if we have enough slack to justify a raise
+        else if (slack >= MIN_SLACK_TO_START_M) {
+          // Calculate how much we should raise
+          float raiseAmount = slack;
+
+          // Only raise if amount is significant (prevents tiny raises)
+          if (raiseAmount >= MIN_RAISE_AMOUNT_M) {
+            ESP_LOGD(__FILE__, "RetrievalManager: Slack available (%.2fm), raising %.2fm",
+                     slack, raiseAmount);
+            chainController->raiseAnchor(raiseAmount);
+            lastRaiseTime_ = now;  // Record raise time
+            transitionTo(RetrievalState::RAISING);
+          } else {
+            ESP_LOGD(__FILE__, "RetrievalManager: Slack (%.2fm) below minimum raise threshold (%.2fm), waiting",
+                     slack, MIN_RAISE_AMOUNT_M);
+            transitionTo(RetrievalState::WAITING_FOR_SLACK);
+          }
         } else {
           ESP_LOGD(__FILE__, "RetrievalManager: Insufficient slack (%.2fm < %.2fm), waiting",
-                   slack, SLACK_THRESHOLD_M);
+                   slack, MIN_SLACK_TO_START_M);
           transitionTo(RetrievalState::WAITING_FOR_SLACK);
         }
       }
@@ -190,9 +215,9 @@ void RetrievalManager::updateRetrieval() {
       } else if (rodeDeployed < depth + FINAL_PULL_THRESHOLD_M) {
         // Switch to final pull phase
         transitionTo(RetrievalState::CHECKING_SLACK);
-      } else if (slack >= SLACK_THRESHOLD_M) {
+      } else if (slack >= MIN_SLACK_TO_START_M) {
         // Enough slack available, go back to checking
-        ESP_LOGI(__FILE__, "RetrievalManager: Slack threshold met (%.2fm), checking for next raise", slack);
+        ESP_LOGD(__FILE__, "RetrievalManager: Slack threshold met (%.2fm), checking for next raise", slack);
         transitionTo(RetrievalState::CHECKING_SLACK);
       }
       // Otherwise, keep waiting

@@ -5,8 +5,8 @@
 
 // ============================================================================
 // Utility: computeTargetHorizontalDistance
-// This calculates the horizontal distance if the chain were taut, given its
-// length and the depth it's hanging in. It includes robust checks.
+// This calculates the horizontal distance accounting for catenary sag,
+// using chain weight and horizontal force from wind/current.
 // ============================================================================
 float ChainController::computeTargetHorizontalDistance(float chainLength, float depth) {
     // Guard against NaN/Inf inputs directly
@@ -16,14 +16,22 @@ float ChainController::computeTargetHorizontalDistance(float chainLength, float 
     }
 
     // Mathematically, chainLength must be >= depth for a real solution
-    // If chainLength < depth, the value under sqrt would be negative.
-    // Also, guard against floating point inaccuracies that might make arg very slightly negative.
     float arg = pow(chainLength, 2) - pow(depth, 2);
-    if (arg < 0.0) { // Using 0.0 as threshold; a slightly more robust check might use a small epsilon like -0.001
+    if (arg < 0.0) {
         ESP_LOGW(__FILE__, "ChainController::computeTargetHorizontalDistance: Negative argument for sqrt! chainLength=%.2f, depth=%.2f, arg=%.2f. This usually means chainLength < depth. Returning 0.0", chainLength, depth, arg);
         return 0.0;
     }
-    return sqrt(arg);
+
+    // Get estimated horizontal force for catenary calculation
+    float horizontalForce = estimateHorizontalForce();
+
+    // Calculate straight-line distance (Pythagorean)
+    float straightLineDistance = sqrt(arg);
+
+    // Apply catenary reduction factor to account for chain sag
+    float reductionFactor = computeCatenaryReductionFactor(chainLength, depth, horizontalForce);
+
+    return straightLineDistance * reductionFactor;
 }
 
 
@@ -47,7 +55,8 @@ ChainController::ChainController(
     state_(ChainState::IDLE), // Default state
     horizontalSlack_(new sensesp::ObservableValue<float>(0.0)),
     depthListener_(new sensesp::SKValueListener<float>("environment.depth.belowSurface", 2000, "/depth/sk")),
-    distanceListener_(new sensesp::SKValueListener<float>("navigation.anchor.distanceFromBow", 2000, "/distance/sk"))
+    distanceListener_(new sensesp::SKValueListener<float>("navigation.anchor.distanceFromBow", 2000, "/distance/sk")),
+    windSpeedListener_(new sensesp::SKValueListener<float>("environment.wind.speedTrue", 2000, "/wind/sk"))
 {
     // Ensure relays are off at startup. PinMode setup should happen in main.cpp.
     digitalWrite(upRelayPin_, LOW);
@@ -331,5 +340,97 @@ void ChainController::calculateAndPublishHorizontalSlack() {
     } else {
         // ESP_LOGD(__FILE__, "ChainController: Horizontal Slack calculated (%.2f m) but no significant change. Not updating observable.", calculated_slack);
     }
+}
+
+// ============================================================================
+// Catenary Physics Calculations
+// ============================================================================
+
+float ChainController::estimateHorizontalForce() {
+    // Estimate horizontal force on the boat from wind
+    // This combines wind drag force with a baseline for current/resistance
+
+    float windSpeed = windSpeedListener_->get(); // m/s from Signal K
+
+    // Validate wind speed data - if invalid, use 10 knots as default
+    if (isnan(windSpeed) || isinf(windSpeed) || windSpeed < 0.0) {
+        windSpeed = 10.0 / 1.944; // 10 knots converted to m/s (~5.14 m/s)
+        ESP_LOGW(__FILE__, "Invalid wind speed data. Using default: 10 knots (%.2f m/s)", windSpeed);
+    }
+
+    // Wind force formula: F = 0.5 * ρ * Cd * A * v²
+    // where: ρ = air density, Cd = drag coefficient, A = windage area, v = wind speed
+    float windForce = 0.5 * AIR_DENSITY * DRAG_COEFFICIENT * BOAT_WINDAGE_AREA_M2 * pow(windSpeed, 2);
+
+    // Add baseline force for current and hull resistance (typically 20-50N)
+    float baselineForce = 30.0;
+
+    float totalForce = windForce + baselineForce;
+
+    // Clamp to reasonable bounds (min 30N, max 2000N for safety)
+    totalForce = fmax(30.0, fmin(2000.0, totalForce));
+
+    ESP_LOGD(__FILE__, "Force estimate: wind=%.1f m/s (%.1f knots), windForce=%.0fN, total=%.0fN",
+             windSpeed, windSpeed * 1.944, windForce, totalForce);
+
+    return totalForce;
+}
+
+float ChainController::computeCatenaryReductionFactor(float chainLength, float anchorDepth, float horizontalForce) {
+    // This function calculates the reduction factor due to chain catenary
+    // Based on catenary curve physics with chain weight and horizontal tension
+    //
+    // KEY PHYSICS:
+    // - LOW force (light wind) → MORE sag → LESS horizontal distance → LOWER reduction factor
+    // - HIGH force (strong wind) → LESS sag → MORE horizontal distance → HIGHER reduction factor
+
+    // Chain weight per meter in water (N/m)
+    float w = CHAIN_WEIGHT_PER_METER_KG * GRAVITY;
+
+    // If horizontal force is very small, there's significant sag
+    if (horizontalForce < 50.0) {
+        // Light wind/current: LOTS of catenary sag (low tension)
+        // Lower reduction factors = more sag = less horizontal distance
+        float scopeRatio = chainLength / fmax(anchorDepth, 1.0);
+        if (scopeRatio < 3.0) {
+            return 0.90;  // Significant sag even on short scope
+        } else if (scopeRatio < 5.0) {
+            return 0.85;  // More sag on typical scope
+        } else {
+            return 0.80;  // Lots of sag on long scope
+        }
+    }
+
+    // Calculate catenary parameter: a = H/w
+    // where H is horizontal tension at anchor, w is weight per unit length
+    float a = horizontalForce / w;
+
+    // For a catenary with horizontal force H and vertical drop of anchorDepth,
+    // the relationship is complex. Using approximation for moderate sag:
+    // horizontal_distance ≈ sqrt(chainLength² - anchorDepth²) - (w * chainLength²)/(8*H)
+    //
+    // The sag reduction term (w * L²)/(8*H) gets SMALLER as H increases (tighter chain)
+
+    // Calculate theoretical straight-line horizontal distance
+    float straightLineDistance = sqrt(pow(chainLength, 2) - pow(anchorDepth, 2));
+
+    // Calculate catenary sag reduction (horizontal distance lost to sag)
+    // This gets SMALLER with higher force (less sag when chain is pulled tight)
+    float catenarySagReduction = (w * pow(chainLength, 2)) / (8.0 * horizontalForce);
+
+    // Actual horizontal distance accounting for catenary
+    float actualHorizontalDistance = straightLineDistance - catenarySagReduction;
+
+    // Reduction factor is the ratio
+    // Higher force → smaller sag reduction → higher actual distance → higher factor
+    float reductionFactor = actualHorizontalDistance / straightLineDistance;
+
+    // Clamp between reasonable bounds (0.80 to 0.99)
+    reductionFactor = fmax(0.80, fmin(0.99, reductionFactor));
+
+    ESP_LOGD(__FILE__, "Catenary calc: chainLen=%.2f, depth=%.2f, force=%.0fN, a=%.2f, sagReduction=%.2f, factor=%.3f",
+             chainLength, anchorDepth, horizontalForce, a, catenarySagReduction, reductionFactor);
+
+    return reductionFactor;
 }
 

@@ -256,19 +256,19 @@ void setup() {
 
   /* React to UP action */
   auto* up_handler = new LambdaConsumer<int>( [up_delay, direction](int input) {
-    ESP_LOGI(__FILE__, "Button UP Changed");
-    if(ignore_input) {  
+    ESP_LOGD(__FILE__, "Button UP Changed");
+    if(ignore_input) {
       return;
     }
-    if (buttonDelayPtr != nullptr) { 
+    if (buttonDelayPtr != nullptr) {
       event_loop()->remove(buttonDelayPtr);
       buttonDelayPtr=nullptr;
     }
     if (input == 0) {
-      ESP_LOGI(__FILE__, "Button UP ON => Up");
+      ESP_LOGD(__FILE__, "Button UP ON => Up");
       direction->set("up");
     } else {
-      ESP_LOGI(__FILE__, "Button UP OFF => Free fall");
+      ESP_LOGD(__FILE__, "Button UP OFF => Free fall");
       buttonDelayPtr = event_loop()->onDelay(up_delay, [direction]() {
         direction->set("free fall");
         buttonDelayPtr=nullptr;
@@ -279,19 +279,19 @@ void setup() {
 
   /* React to DOWN action */
   auto* down_handler = new LambdaConsumer<int>( [down_delay, direction](int input) {
-    ESP_LOGI(__FILE__, "Button DOWN Changed"); 
-    if(ignore_input) {  
+    ESP_LOGD(__FILE__, "Button DOWN Changed");
+    if(ignore_input) {
       return;
-    } 
-    if (buttonDelayPtr != nullptr) { 
+    }
+    if (buttonDelayPtr != nullptr) {
       event_loop()->remove(buttonDelayPtr);
       buttonDelayPtr=nullptr;
     }
     if (input == 0) {
-      ESP_LOGI(__FILE__, "Button DOWN ON => Down");
+      ESP_LOGD(__FILE__, "Button DOWN ON => Down");
       direction->set("down");
     } else {
-      ESP_LOGI(__FILE__, "Button DOWN OFF => Free fall");
+      ESP_LOGD(__FILE__, "Button DOWN OFF => Free fall");
       buttonDelayPtr = event_loop()->onDelay(down_delay, [direction]() {
         direction->set("free fall");
         buttonDelayPtr=nullptr;
@@ -541,11 +541,11 @@ void setup() {
   // Startup delay to ignore input changes while system stabilizes
 
     int iStateCounter = digitalRead(di3_gpio);
-    ESP_LOGI(__FILE__, "Initial di3_gpio state: %d", iStateCounter);
+    ESP_LOGD(__FILE__, "Initial di3_gpio state: %d", iStateCounter);
     int iStateUP = digitalRead(upRelayPin);
-    ESP_LOGI(__FILE__, "Initial UP button state: %d", iStateUP);
+    ESP_LOGD(__FILE__, "Initial UP button state: %d", iStateUP);
     int iStateDOWN = digitalRead(dnRelayPin);
-    ESP_LOGI(__FILE__, "Initial DOWN button state: %d", iStateDOWN);
+    ESP_LOGD(__FILE__, "Initial DOWN button state: %d", iStateDOWN);
 
     event_loop()->onDelay(2000, []() {
       ignore_input = false; 

@@ -56,6 +56,12 @@ public:
     sensesp::SKValueListener<float>* getDepthListener() const { return depthListener_; }
     sensesp::SKValueListener<float>* getDistanceListener() const { return distanceListener_; }
 
+    // Public method to check if controller is actively controlling the windlass
+    bool isActivelyControlling() const { return state_ != ChainState::IDLE; }
+
+    // Public catenary physics method for use by DeploymentManager
+    float computeTargetHorizontalDistance(float chainLength, float depth);
+
 private:
     float min_length_;
     float max_length_;
@@ -77,15 +83,24 @@ private:
     float downSpeed_ = 1000.0; // default 1 sec per meter
     const float smoothing_factor_ = 0.2;
 
-    
+
     sensesp::SKValueListener<float>* depthListener_;
     sensesp::SKValueListener<float>* distanceListener_;
+    sensesp::SKValueListener<float>* windSpeedListener_;  // Wind speed for catenary calculations
     sensesp::ObservableValue<float>* horizontalSlack_; // The ObservableValue for the calculated slack
 
     void updateHorizontalSlack(float slack);
-    // Helper to compute horizontal distance for a given chain length and depth
-    // (Implementation will be in ChainController.cpp)
-    float computeTargetHorizontalDistance(float chainLength, float depth);
+
+    // Catenary physics calculation methods (private helpers)
+    float computeCatenaryReductionFactor(float chainLength, float anchorDepth, float horizontalForce);
+    float estimateHorizontalForce();  // Estimate force from wind/current
+
+    // Chain and boat physical constants
+    static constexpr float CHAIN_WEIGHT_PER_METER_KG = 2.2;  // kg/m in water (adjusted for buoyancy)
+    static constexpr float GRAVITY = 9.81;                    // m/s²
+    static constexpr float BOAT_WINDAGE_AREA_M2 = 15.0;      // m² - effective windage area
+    static constexpr float AIR_DENSITY = 1.225;               // kg/m³ at sea level
+    static constexpr float DRAG_COEFFICIENT = 1.2;            // typical for boat hull + rigging
 
 };
 

@@ -8,24 +8,8 @@ DeploymentManager::DeploymentManager(ChainController* chainCtrl)
     currentStage(IDLE),
     isRunning(false),
     dropInitiated(false),
-    updateEvent(nullptr),
-    speedUpdateEvent(nullptr),
-    ewmaDistance(0.0),
-    lastRawDistanceForEWMA(0.0) {
-
-  // Initialize wind speed listener for catenary calculations
-  // Using apparent wind speed which is what the boat experiences at anchor
-  windSpeedListener_ = new sensesp::SKValueListener<float>(
-    "environment.wind.speedApparent",  // Signal K path for apparent wind speed (m/s)
-    2000,                               // Update interval: 2000ms
-    "/wind/sk"                          // Config path
-  );
-
-  ESP_LOGI(__FILE__, "DeploymentManager: Wind speed listener initialized");
-}
-
-void DeploymentManager::strBoatSpeed() {
-  startSpeedMeasurement();
+    updateEvent(nullptr) {
+  ESP_LOGI(__FILE__, "DeploymentManager initialized");
 }
 
 void DeploymentManager::start() {
@@ -43,18 +27,14 @@ void DeploymentManager::start() {
   chain30 = 0.40 * totalChainLength;
   chain75 = 0.80 * totalChainLength;
 
-  // Get dynamic horizontal force estimate from wind conditions
-  float estimatedHorizontalForce = estimateHorizontalForce();
-
-  // Calculate catenary-adjusted distances using physics-based model
+  // Calculate catenary-adjusted distances using ChainController's physics model
+  // ChainController now automatically accounts for catenary effects and wind force
   targetDistanceInit = computeTargetHorizontalDistance(targetDropDepth, anchorDepth);
-  float reductionFactor30 = computeCatenaryReductionFactor(chain30, anchorDepth, estimatedHorizontalForce);
-  float reductionFactor75 = computeCatenaryReductionFactor(chain75, anchorDepth, estimatedHorizontalForce);
-  targetDistance30 = computeTargetHorizontalDistance(chain30, anchorDepth) * reductionFactor30;
-  targetDistance75 = computeTargetHorizontalDistance(chain75, anchorDepth) * reductionFactor75;
+  targetDistance30 = computeTargetHorizontalDistance(chain30, anchorDepth);
+  targetDistance75 = computeTargetHorizontalDistance(chain75, anchorDepth);
 
-  ESP_LOGI(__FILE__, "DeploymentManager: Catenary calcs - Force: %.0fN, Factor30: %.3f, Factor75: %.3f",
-           estimatedHorizontalForce, reductionFactor30, reductionFactor75);  
+  ESP_LOGI(__FILE__, "DeploymentManager: Target distances - Init: %.2f, 30%%: %.2f, 75%%: %.2f",
+           targetDistanceInit, targetDistance30, targetDistance75);  
 
     if (totalChainLength < 10.0) { 
       ESP_LOGW(__FILE__, "DeploymentManager: Calculated totalChainLength (%.2f m) is too small. Capping at 10.0 m.", totalChainLength);
@@ -70,11 +50,12 @@ void DeploymentManager::start() {
   dropInitiated = false;
   currentStageTargetLength = 0.0;
 
-  startSpeedMeasurement(); 
-  ESP_LOGI(__FILE__, "DeploymentManager: Starting autoDrop. Initial depth: %.2f, Target Drop Depth: %.2f, Total Chain: %.2f", (targetDropDepth-2), targetDropDepth, totalChainLength);
+  // Initialize slack tracking
+  lastSlack_ = chainController->getHorizontalSlackObservable()->get();
+  lastSlackTime_ = millis();
+  slackRate_ = 0.0;
 
-  _lastDistanceAtDeploymentCommand = ewmaDistance; 
-  _accumulatedDeployDemand = 0.0;
+  ESP_LOGI(__FILE__, "DeploymentManager: Starting autoDrop. Initial depth: %.2f, Target Drop Depth: %.2f, Total Chain: %.2f", (targetDropDepth-2), targetDropDepth, totalChainLength);
 
   // Schedule the tick/update
   if (updateEvent != nullptr) {
@@ -90,12 +71,10 @@ void DeploymentManager::stop() {
     sensesp::event_loop()->remove(updateEvent);
     updateEvent = nullptr;
   }
-  if (deployPulseEvent != nullptr) { // <--- ADDED
-  sensesp::event_loop()->remove(deployPulseEvent);
-  deployPulseEvent = nullptr;
+  if (deployPulseEvent != nullptr) {
+    sensesp::event_loop()->remove(deployPulseEvent);
+    deployPulseEvent = nullptr;
   }
-  _accumulatedDeployDemand = 0.0;
-  stopSpeedMeasurement();
   currentStage = IDLE;
 }
 
@@ -105,151 +84,9 @@ void DeploymentManager::reset() {
   // (e.g., reset flags, timers)
 }
 
-void DeploymentManager::startSpeedMeasurement() {
-  measuring = true;
-  float initialRawDistance = chainController->getDistanceListener()->get();
-  lastDistance = initialRawDistance;
-  ewmaDistance = initialRawDistance;
-  lastTime = millis();
-  ewmaSpeed = 0;
-  lastRawDistanceForEWMA = lastDistance;
-
-  speedUpdateEvent = sensesp::event_loop()->onRepeat(
-    100,
-    [this]() {
-      if (this->measuring) {
-        unsigned long now = millis();
-        float currentRawDistance = this->chainController->getDistanceListener()->get();
-        float currentRawDepth = this->chainController->getDepthListener()->get();
-        
-                  // Guard against NaN/Inf in live sensor readings for distance
-          if (isnan(currentRawDistance) || isinf(currentRawDistance)) {
-              ESP_LOGW(__FILE__, "Speed Measurement: Raw distance reading is NaN/Inf (%.2f). Skipping update for this cycle.", currentRawDistance);
-              return;
-          }
-          // Guard against NaN/Inf for depth as well
-          if (isnan(currentRawDepth) || isinf(currentRawDepth)) {
-              ESP_LOGW(__FILE__, "Speed Measurement: Raw depth reading is NaN/Inf (%.2f). Skipping update for this cycle.", currentRawDepth);
-              return;
-          }
-        
-        
-        this->ewmaDistance = distance_alpha * currentRawDistance + (1 - distance_alpha) * this->ewmaDistance;
-        float dt = (now - this->lastTime) / 1000.0;
-
-        float instSpeed = (currentRawDistance - this->lastDistance) / dt;
-        this->ewmaSpeed = alpha * instSpeed + (1 - alpha) * this->ewmaSpeed;
-
-        this->lastDistance = currentRawDistance;
-        this->lastTime = now;
-      }
-    }
-  );
-}
-
-void DeploymentManager::stopSpeedMeasurement() {
-  measuring = false;
-  if (speedUpdateEvent != nullptr) {
-    sensesp::event_loop()->remove(speedUpdateEvent);
-    speedUpdateEvent = nullptr;
-  }
-}
-
-float DeploymentManager::getCurrentSpeed() {
-  if (fabs(ewmaSpeed) < 0.001) return 0.0f;
-  return ewmaSpeed;
-}
-
 float DeploymentManager::computeTargetHorizontalDistance(float chainLength, float anchorDepth) {
-  return sqrt(pow(chainLength, 2) - pow(anchorDepth, 2));
-}
-
-float DeploymentManager::estimateHorizontalForce() {
-  // Estimate horizontal force on the boat from wind
-  // This combines wind drag force with a baseline for current/resistance
-
-  float windSpeed = windSpeedListener_->get(); // m/s from Signal K
-
-  // Validate wind speed data - if invalid, use 10 knots as default
-  if (isnan(windSpeed) || isinf(windSpeed) || windSpeed < 0.0) {
-    windSpeed = 10.0 / 1.944; // 10 knots converted to m/s (~5.14 m/s)
-    ESP_LOGW(__FILE__, "Invalid wind speed data. Using default: 10 knots (%.2f m/s)", windSpeed);
-  }
-
-  // Wind force formula: F = 0.5 * ρ * Cd * A * v²
-  // where: ρ = air density, Cd = drag coefficient, A = windage area, v = wind speed
-  float windForce = 0.5 * AIR_DENSITY * DRAG_COEFFICIENT * BOAT_WINDAGE_AREA_M2 * pow(windSpeed, 2);
-
-  // Add baseline force for current and hull resistance (typically 20-50N)
-  float baselineForce = 30.0;
-
-  float totalForce = windForce + baselineForce;
-
-  // Clamp to reasonable bounds (min 30N, max 2000N for safety)
-  totalForce = fmax(30.0, fmin(2000.0, totalForce));
-
-  ESP_LOGD(__FILE__, "Force estimate: wind=%.1f m/s (%.1f knots), windForce=%.0fN, total=%.0fN",
-           windSpeed, windSpeed * 1.944, windForce, totalForce);
-
-  return totalForce;
-}
-
-float DeploymentManager::computeCatenaryReductionFactor(float chainLength, float anchorDepth, float horizontalForce) {
-  // This function calculates the reduction factor due to chain catenary
-  // Based on catenary curve physics with chain weight and horizontal tension
-  //
-  // KEY PHYSICS:
-  // - LOW force (light wind) → MORE sag → LESS horizontal distance → LOWER reduction factor
-  // - HIGH force (strong wind) → LESS sag → MORE horizontal distance → HIGHER reduction factor
-
-  // Chain weight per meter in water (N/m)
-  float w = CHAIN_WEIGHT_PER_METER_KG * GRAVITY;
-
-  // If horizontal force is very small, there's significant sag
-  if (horizontalForce < 50.0) {
-    // Light wind/current: LOTS of catenary sag (low tension)
-    // Lower reduction factors = more sag = less horizontal distance
-    float scopeRatio = chainLength / fmax(anchorDepth, 1.0);
-    if (scopeRatio < 3.0) {
-      return 0.90;  // Significant sag even on short scope
-    } else if (scopeRatio < 5.0) {
-      return 0.85;  // More sag on typical scope
-    } else {
-      return 0.80;  // Lots of sag on long scope
-    }
-  }
-
-  // Calculate catenary parameter: a = H/w
-  // where H is horizontal tension at anchor, w is weight per unit length
-  float a = horizontalForce / w;
-
-  // For a catenary with horizontal force H and vertical drop of anchorDepth,
-  // the relationship is complex. Using approximation for moderate sag:
-  // horizontal_distance ≈ sqrt(chainLength² - anchorDepth²) - (w * chainLength²)/(8*H)
-  //
-  // The sag reduction term (w * L²)/(8*H) gets SMALLER as H increases (tighter chain)
-
-  // Calculate theoretical straight-line horizontal distance
-  float straightLineDistance = sqrt(pow(chainLength, 2) - pow(anchorDepth, 2));
-
-  // Calculate catenary sag reduction (horizontal distance lost to sag)
-  // This gets SMALLER with higher force (less sag when chain is pulled tight)
-  float catenarySagReduction = (w * pow(chainLength, 2)) / (8.0 * horizontalForce);
-
-  // Actual horizontal distance accounting for catenary
-  float actualHorizontalDistance = straightLineDistance - catenarySagReduction;
-
-  // Reduction factor is the ratio
-  // Higher force → smaller sag reduction → higher actual distance → higher factor
-  float reductionFactor = actualHorizontalDistance / straightLineDistance;
-
-  // Clamp between reasonable bounds (0.80 to 0.99)
-  reductionFactor = fmax(0.80, fmin(0.99, reductionFactor));
-
-  ESP_LOGD(__FILE__, "Catenary calc: chainLen=%.2f, depth=%.2f, force=%.0fN, a=%.2f, sagReduction=%.2f, factor=%.3f",
-           chainLength, anchorDepth, horizontalForce, a, catenarySagReduction, reductionFactor);
-
-  return reductionFactor;
+  // Delegate to ChainController which now has the catenary-aware calculation
+  return chainController->computeTargetHorizontalDistance(chainLength, anchorDepth);
 }
 
 void DeploymentManager::startDeployPulse(float stageTargetChainLength) {
@@ -288,88 +125,86 @@ void DeploymentManager::startDeployPulse(float stageTargetChainLength) {
             return;
         }
 
-        float current_boat_speed_mps = this->getCurrentSpeed(); // m/s (from EWMA)
-        float current_chain_length = this->chainController->getChainLength();
-        float windlass_deployment_rate_mps = 1000.0 / this->chainController->getDownSpeed(); // m/s (from ChainController's calibrated speed)
-        float current_horizontal_slack = this->chainController->getHorizontalSlackObservable()->get();
-        float current_depth = this->chainController->getCurrentDepth();
-        float dynamic_max_acceptable_slack = current_depth * .5;
-
-
-
-        // --- Deployment Tuning Parameters (can become configurable via SensESP UI) ---
-        const float slack_factor = 1.25; // Increased to deploy more aggressively during rapid phases
-        const unsigned long decision_window_ms = 500; // How frequently we make a "deploy decision" if windlass is faster than boat
-        const float min_deploy_amount_meters = 0.5; // Minimal amount to deploy if boat speed is very low/zero
-        const float effectively_stopped_speed_mps = 0.1; // Threshold for boat speed (0.1 m/s = ~0.2 knots)
-
-        // If ChainController is currently moving, we MUST wait for it to finish.
-        if (this->chainController->isActive()) {
+        // Wait if ChainController is busy
+        if (this->chainController->isActivelyControlling()) {
+            ESP_LOGD(__FILE__, "Deploy Pulse: ChainController busy, rescheduling...");
             deployPulseEvent = sensesp::event_loop()->onDelay(DECISION_WINDOW_MS, [this, stageTargetChainLength]() {
                 startDeployPulse(stageTargetChainLength);
             });
             return;
         }
 
-        // --- Calculate Desired Amount to Deploy ---
-        float desired_payout_this_cycle = 0.0;
-        if (current_boat_speed_mps <= 0.1) { // effectively stopped
-            desired_payout_this_cycle = 0.0; // Accumulate only via drift
-        } else {  // Boat is moving back
-            float boat_movement_in_window = current_boat_speed_mps * (DECISION_WINDOW_MS / 1000.0);
-            desired_payout_this_cycle = boat_movement_in_window * slack_factor;
+        // --- Get current state ---
+        float current_chain = this->chainController->getChainLength();
+        float current_slack = this->chainController->getHorizontalSlackObservable()->get();
+        unsigned long now = millis();
+
+        // --- Calculate slack rate-of-change ---
+        float dt = (now - lastSlackTime_) / 1000.0;  // seconds
+        if (dt > 0.1) {  // Update if at least 100ms elapsed
+            slackRate_ = (current_slack - lastSlack_) / dt;  // m/s (negative = slack decreasing)
+            lastSlack_ = current_slack;
+            lastSlackTime_ = now;
         }
 
-        // --- 3. Accumulate Demand ---
-        _accumulatedDeployDemand += desired_payout_this_cycle;
+        // --- Calculate target slack: 10% of deployed chain ---
+        float target_slack = current_chain * TARGET_SLACK_RATIO;
+        float slack_deficit = target_slack - current_slack;  // Positive = need more slack (deploy chain)
 
+        // --- Determine if we should deploy ---
+        bool shouldDeploy = false;
+        float deploy_amount = 0.0;
 
-        // --- 4. Decide Whether to Deploy Now or Wait ---
-        float actual_deploy_amount = 0.0;
-        unsigned long next_pulse_delay_ms = DECISION_WINDOW_MS; // Default to waiting
+        if (slack_deficit > 0.2) {  // Need at least 20cm more slack to deploy
+            shouldDeploy = true;
 
-        // Condition 1: Do we have enough accumulated demand?
-        bool hasEnoughDemand = (_accumulatedDeployDemand >= MIN_DEPLOY_THRESHOLD_M);
-        // Condition 2: Is there excessive positive slack?
-        bool hasExcessSlack = (current_horizontal_slack > dynamic_max_acceptable_slack);
+            // Choose deployment amount based on slack rate
+            if (slackRate_ < AGGRESSIVE_SLACK_RATE_THRESHOLD) {
+                // Slack dropping fast - deploy aggressively
+                deploy_amount = AGGRESSIVE_DEPLOY_INCREMENT;
+                ESP_LOGD(__FILE__, "Deploy Pulse: Slack dropping fast (%.3f m/s). Deploying %.2f m aggressively.",
+                         slackRate_, deploy_amount);
+            } else {
+                // Normal deployment
+                deploy_amount = NORMAL_DEPLOY_INCREMENT;
+                ESP_LOGD(__FILE__, "Deploy Pulse: Slack deficit %.2f m, deploying %.2f m normally.",
+                         slack_deficit, deploy_amount);
+            }
 
-        if (hasEnoughDemand && !hasExcessSlack) {
-            // Normal path: deploy the accumulated amount
-            actual_deploy_amount = _accumulatedDeployDemand;
-            _accumulatedDeployDemand = 0.0; // Reset accumulated demand after deploying
-
-        // Don't overshoot the stage's total target
-        float remaining_to_stage_target = stageTargetChainLength - current_chain_length;
-        if (actual_deploy_amount > remaining_to_stage_target) {
-            actual_deploy_amount = remaining_to_stage_target;
+            // Don't exceed stage target
+            if (current_chain + deploy_amount > stageTargetChainLength) {
+                deploy_amount = stageTargetChainLength - current_chain;
+                if (deploy_amount < 0.1) shouldDeploy = false;  // Too close to target
+            }
         }
 
+        // --- Check maximum slack limit (safety brake) ---
+        float current_depth = this->chainController->getCurrentDepth();
+        float max_acceptable_slack = current_depth * 0.5;  // Still use 50% of depth as safety limit
 
-        // Command the ChainController if actual_deploy_amount is significant
-        if (actual_deploy_amount >= 0.01) { // Min 1cm payout
-            ESP_LOGI(__FILE__, "Deploy Pulse: Triggering payout (Demand %.2f m, Slack %.2f m). Commanding lowerAnchor by %.2f m. Boat speed: %.2f m/s, Windlass rate: %.2f m/s (%.0f ms/m)",
-                        actual_deploy_amount, current_horizontal_slack, actual_deploy_amount, current_boat_speed_mps, windlass_deployment_rate_mps, this->chainController->getDownSpeed());
+        if (current_slack > max_acceptable_slack) {
+            shouldDeploy = false;
+            ESP_LOGD(__FILE__, "Deploy Pulse: Excessive slack (%.2f m > %.2f m). Pausing deployment.",
+                     current_slack, max_acceptable_slack);
+        }
 
-            this->chainController->lowerAnchor(actual_deploy_amount);
-            _lastDistanceAtDeploymentCommand = this->chainController->getCurrentDistance(); // Or this->ewmaDistance;
+        // --- Execute deployment or wait ---
+        unsigned long next_pulse_delay_ms = DECISION_WINDOW_MS;
 
-            // Schedule next pulse based on windlass operation time
-            next_pulse_delay_ms = (unsigned long)(actual_deploy_amount * this->chainController->getDownSpeed()) + 200; // Windlass time + buffer
+        if (shouldDeploy) {
+            ESP_LOGD(__FILE__, "Deploy Pulse: Deploying %.2f m (chain: %.2f, slack: %.2f, target_slack: %.2f, rate: %.3f m/s)",
+                     deploy_amount, current_chain, current_slack, target_slack, slackRate_);
+
+            this->chainController->lowerAnchor(deploy_amount);
+
+            // Wait for deployment to complete
+            next_pulse_delay_ms = (unsigned long)(deploy_amount * this->chainController->getDownSpeed()) + 200;
+            if (next_pulse_delay_ms < DECISION_WINDOW_MS) {
+                next_pulse_delay_ms = DECISION_WINDOW_MS;
+            }
         } else {
-            // Accumulated demand too small - reset and wait for next decision window
-            _accumulatedDeployDemand = 0.0;
-        }
-
-        } else if (hasExcessSlack) {
-        // Too much slack, even if boat is moving back or we have demand. PAUSE DEPLOYMENT.
-        ESP_LOGI(__FILE__, "Deploy Pulse: Excessive slack detected (%.2f m > %.2f m). Pausing deployment.",
-                    current_horizontal_slack, dynamic_max_acceptable_slack);
-        // next_pulse_delay_ms remains DECISION_WINDOW_MS (already set)
-        }
-
-        // Ensure a minimum delay
-        if (next_pulse_delay_ms < DECISION_WINDOW_MS) {
-            next_pulse_delay_ms = DECISION_WINDOW_MS;
+            ESP_LOGD(__FILE__, "Deploy Pulse: No deployment needed. Chain: %.2f, Slack: %.2f, Target: %.2f",
+                     current_chain, current_slack, target_slack);
         }
         deployPulseEvent = sensesp::event_loop()->onDelay(next_pulse_delay_ms, [this, stageTargetChainLength]() {
             startDeployPulse(stageTargetChainLength);
@@ -384,8 +219,7 @@ void DeploymentManager::updateDeployment() {
   }
 
   float currentChainLength = chainController->getChainLength();
- 
-  float currentDistance = this->ewmaDistance; 
+  float currentDistance = chainController->getDistanceListener()->get(); 
 
   switch (currentStage) {
     case IDLE:
