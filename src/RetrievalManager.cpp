@@ -146,6 +146,13 @@ void RetrievalManager::updateRetrieval() {
         break;
       }
 
+      // Wait if ChainController is busy
+      if (chainController->isActivelyControlling()) {
+        // ChainController is actively raising, stay in CHECKING_SLACK and wait
+        ESP_LOGD(__FILE__, "RetrievalManager: ChainController busy, waiting...");
+        break;
+      }
+
       // Check if we're in final pull phase (rode < depth + 10m)
       if (rodeDeployed < depth + FINAL_PULL_THRESHOLD_M) {
         // Final pull - raise everything except the completion threshold
@@ -201,7 +208,7 @@ void RetrievalManager::updateRetrieval() {
       }
       // Wait for the chain controller to finish raising
       else if (!chainController->isActive()) {
-        ESP_LOGI(__FILE__, "RetrievalManager: Raising complete, rode now at %.2fm", rodeDeployed);
+        ESP_LOGD(__FILE__, "RetrievalManager: Raising complete, rode now at %.2fm", rodeDeployed);
         // After raising completes, wait for slack to build up again
         transitionTo(RetrievalState::WAITING_FOR_SLACK);
       }

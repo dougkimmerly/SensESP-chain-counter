@@ -151,7 +151,7 @@ void ChainController::control(float current_pos) {
                 digitalWrite(downRelayPin_, LOW);
                 calcSpeed(movement_start_time_, start_position_);
                 state_ = ChainState::IDLE;
-                ESP_LOGI(__FILE__, "control: target reached (lowering), stopping at %.2f m.", current_pos);
+                ESP_LOGD(__FILE__, "control: target reached (lowering), stopping at %.2f m.", current_pos);
             } else {
                 digitalWrite(downRelayPin_, HIGH); // Keep relay HIGH if still lowering
             }
@@ -164,7 +164,7 @@ void ChainController::control(float current_pos) {
                 digitalWrite(upRelayPin_, LOW);
                 calcSpeed(movement_start_time_, start_position_);
                 state_ = ChainState::IDLE;
-                ESP_LOGI(__FILE__, "control: target reached (raising), stopping at %.2f m.", current_pos);
+                ESP_LOGD(__FILE__, "control: target reached (raising), stopping at %.2f m.", current_pos);
             } else {
                 digitalWrite(upRelayPin_, HIGH); // Keep relay HIGH if still raising
             }
@@ -174,14 +174,14 @@ void ChainController::control(float current_pos) {
 
 void ChainController::stop() {
     if(state_ == ChainState::IDLE) {
-        ESP_LOGI(__FILE__, "stop() called but already IDLE.");
+        ESP_LOGD(__FILE__, "stop() called but already IDLE.");
         return;
     }
     digitalWrite(upRelayPin_, LOW);
     digitalWrite(downRelayPin_, LOW);
     calcSpeed(movement_start_time_, start_position_); // Calculate speed for the movement that was stopped
     state_ = ChainState::IDLE;
-    ESP_LOGI(__FILE__, "stop: all relays off, state IDLE.");
+    ESP_LOGD(__FILE__, "stop: all relays off, state IDLE.");
 }
 
 bool ChainController::isActive() const {
@@ -291,7 +291,6 @@ float ChainController::getCurrentDistance() const {
     float distance = distanceListener_->get(); // Get the current value
     // If the listener has never received a value, or returns NaN/Inf/a very small number
     if (isnan(distance) || isinf(distance) || distance <= 0.01) { // Consider 0.01 as effectively zero for distance
-        // ESP_LOGD(__FILE__, "ChainController: getCurrentDistance() returning 0.0, distanceListener has no valid data (%.2f).", distance);
         return 0.0;
     }
     return distance;
@@ -302,35 +301,40 @@ void ChainController::calculateAndPublishHorizontalSlack() {
     float current_depth = getCurrentDepth();
     float current_distance = getCurrentDistance();
 
-    // ESP_LOGD(__FILE__, "SLACK CALC DEBUG: Inputs: Chain=%.2f, Depth=%.2f, Dist=%.2f", current_chain, current_depth, current_distance);
+    // Account for bow height (2m above water) when calculating effective depth
+    static constexpr float BOW_HEIGHT_M = 2.0;
+    float effective_depth = fmax(0.0, current_depth - BOW_HEIGHT_M);
 
     float calculated_slack = 0.0; // Initialize for final result
     float horizontal_distance_taut = 0.0; // Initialize
 
-    // --- Start Robust Validation for Input Data Sanity (not physical impossibility for the slack value itself) ---
-    // If any input is essentially zero or invalid, we cannot compute meaningful slack.
-    if (current_chain <= 0.01 || current_depth <= 0.01 || current_distance <= 0.01 || isnan(current_chain) || isinf(current_chain) || isnan(current_depth) || isinf(current_depth) || isnan(current_distance) || isinf(current_distance)) {
-        // ESP_LOGW(__FILE__, "ChainController: Invalid (zero/NaN/Inf) inputs for slack calculation. Chain=%.2f, Depth=%.2f, Dist=%.2f. Setting slack to 0.0.", current_chain, current_depth, current_distance);
+    // --- Start Robust Validation for Input Data Sanity ---
+    // We need chain and depth to calculate slack. Distance can be 0 (boat directly over anchor).
+    // Note: Slack = horizontal_distance_taut - current_distance
+    // If distance=0, slack = all of the horizontal_distance_taut (chain sag on seabed)
+    if (current_chain <= 0.01 || current_depth <= 0.01 || isnan(current_chain) || isinf(current_chain) || isnan(current_depth) || isinf(current_depth) || isnan(current_distance) || isinf(current_distance)) {
         calculated_slack = 0.0;
     }
     // --- End Robust Validation for Input Data Sanity ---
     else {
         // If inputs are sane, proceed with calculation.
-        // computeTargetHorizontalDistance already handles chainLength < depth by returning 0.0,
-        // which will then correctly lead to a large negative slack: (0.0 - current_distance)
-        horizontal_distance_taut = computeTargetHorizontalDistance(current_chain, current_depth);
-        
-        // --- CORRECTED SLACK CALCULATION (allowing negative values) ---
-        calculated_slack = horizontal_distance_taut - current_distance;
+        // Use effective depth (accounting for bow height) in slack calculation
+        horizontal_distance_taut = computeTargetHorizontalDistance(current_chain, effective_depth);
+
+        // If distance is unavailable (still 0.0), use just the taut distance as slack
+        // This means all catenary sag is on the seabed
+        if (current_distance <= 0.01) {
+            calculated_slack = horizontal_distance_taut;
+        } else {
+            // --- CORRECTED SLACK CALCULATION (allowing negative values) ---
+            calculated_slack = horizontal_distance_taut - current_distance;
+        }
         // --- END CORRECTION ---
 
         // Check for NaN/Inf in the final result (should be caught earlier, but defensive check)
         if (isnan(calculated_slack) || isinf(calculated_slack)) {
-            //  ESP_LOGE(__FILE__, "ChainController: Slack calculated as NaN/Inf despite sane inputs. Chain=%.2f, Depth=%.2f, Dist=%.2f. Setting slack to 0.0.", current_chain, current_depth, current_distance);
              calculated_slack = 0.0;
         }
-        // ESP_LOGD(__FILE__, "SLACK CALC DEBUG: TautHorizDist (based on Chain): %.2f m", horizontal_distance_taut);
-        // ESP_LOGD(__FILE__, "SLACK CALC DEBUG: Calculated Slack (TautHorizDist - Dist): %.2f m", calculated_slack);
     }
 
     // --- Update the ObservableValue (only if significantly changed) ---
@@ -369,9 +373,6 @@ float ChainController::estimateHorizontalForce() {
 
     // Clamp to reasonable bounds (min 30N, max 2000N for safety)
     totalForce = fmax(30.0, fmin(2000.0, totalForce));
-
-    ESP_LOGD(__FILE__, "Force estimate: wind=%.1f m/s (%.1f knots), windForce=%.0fN, total=%.0fN",
-             windSpeed, windSpeed * 1.944, windForce, totalForce);
 
     return totalForce;
 }
@@ -428,8 +429,8 @@ float ChainController::computeCatenaryReductionFactor(float chainLength, float a
     // Clamp between reasonable bounds (0.80 to 0.99)
     reductionFactor = fmax(0.80, fmin(0.99, reductionFactor));
 
-    ESP_LOGD(__FILE__, "Catenary calc: chainLen=%.2f, depth=%.2f, force=%.0fN, a=%.2f, sagReduction=%.2f, factor=%.3f",
-             chainLength, anchorDepth, horizontalForce, a, catenarySagReduction, reductionFactor);
+    // ESP_LOGD(__FILE__, "Catenary calc: chainLen=%.2f, depth=%.2f, force=%.0fN, a=%.2f, sagReduction=%.2f, factor=%.3f",
+    //          chainLength, anchorDepth, horizontalForce, a, catenarySagReduction, reductionFactor);
 
     return reductionFactor;
 }

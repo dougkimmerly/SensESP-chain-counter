@@ -50,11 +50,6 @@ void DeploymentManager::start() {
   dropInitiated = false;
   currentStageTargetLength = 0.0;
 
-  // Initialize slack tracking
-  lastSlack_ = chainController->getHorizontalSlackObservable()->get();
-  lastSlackTime_ = millis();
-  slackRate_ = 0.0;
-
   ESP_LOGI(__FILE__, "DeploymentManager: Starting autoDrop. Initial depth: %.2f, Target Drop Depth: %.2f, Total Chain: %.2f", (targetDropDepth-2), targetDropDepth, totalChainLength);
 
   // Schedule the tick/update
@@ -89,128 +84,67 @@ float DeploymentManager::computeTargetHorizontalDistance(float chainLength, floa
   return chainController->computeTargetHorizontalDistance(chainLength, anchorDepth);
 }
 
-void DeploymentManager::startDeployPulse(float stageTargetChainLength) {
-    // If a pulse event is already scheduled, it means this call is from updateDeployment()
-    // or a previous pulse setting up the next. Remove any existing to ensure a fresh schedule.
-    if (deployPulseEvent != nullptr) {
-        sensesp::event_loop()->remove(deployPulseEvent);
-        deployPulseEvent = nullptr;
+void DeploymentManager::startContinuousDeployment(float stageTargetChainLength) {
+    // Issue the full deployment command for the stage target
+    float current_chain = chainController->getChainLength();
+    float amount_to_deploy = stageTargetChainLength - current_chain;
+
+    if (amount_to_deploy > 0.1) {  // Only deploy if significant amount remains
+        ESP_LOGI(__FILE__, "DeploymentManager: Starting continuous deployment of %.2fm to reach %.2fm",
+                 amount_to_deploy, stageTargetChainLength);
+        chainController->lowerAnchor(amount_to_deploy);
     }
 
-    // Schedule the actual pulse logic as a one-shot event
-    // Using a delay of 0 for immediate execution if no prior pulse was active,
-    // or the calculated delay for subsequent pulses.
-    deployPulseEvent = sensesp::event_loop()->onDelay(0, [this, stageTargetChainLength]() {
-        // First, check if the DeploymentManager is still running and in an active DEPLOY stage
-        if (!isRunning || (currentStage != DEPLOY_30 && currentStage != DEPLOY_75 && currentStage != DEPLOY_100)) {
-            ESP_LOGD(__FILE__, "Deploy Pulse: DM not running or not in DEPLOY stage. Stopping pulses.");
-            deployPulseEvent = nullptr; // Ensure event is cleared
-            return; // Exit this lambda, no further pulse scheduled
-        }
-
-        // Validate that the captured target still matches the current stage target
-        float current_stage_target = 0.0;
-        if (currentStage == DEPLOY_30) {
-            current_stage_target = chain30;
-        } else if (currentStage == DEPLOY_75) {
-            current_stage_target = chain75;
-        } else if (currentStage == DEPLOY_100) {
-            current_stage_target = totalChainLength;
-        }
-
-        // If the captured target doesn't match the current stage, the stage transitioned
-        if (fabs(stageTargetChainLength - current_stage_target) > 0.01) {
-            ESP_LOGW(__FILE__, "Deploy Pulse: Stage transition detected (target mismatch: %.2f vs %.2f). Stopping stale pulse.", stageTargetChainLength, current_stage_target);
-            deployPulseEvent = nullptr;
-            return;
-        }
-
-        // Wait if ChainController is busy
-        if (this->chainController->isActivelyControlling()) {
-            ESP_LOGD(__FILE__, "Deploy Pulse: ChainController busy, rescheduling...");
-            deployPulseEvent = sensesp::event_loop()->onDelay(DECISION_WINDOW_MS, [this, stageTargetChainLength]() {
-                startDeployPulse(stageTargetChainLength);
-            });
-            return;
-        }
-
-        // --- Get current state ---
-        float current_chain = this->chainController->getChainLength();
-        float current_slack = this->chainController->getHorizontalSlackObservable()->get();
-        unsigned long now = millis();
-
-        // --- Calculate slack rate-of-change ---
-        float dt = (now - lastSlackTime_) / 1000.0;  // seconds
-        if (dt > 0.1) {  // Update if at least 100ms elapsed
-            slackRate_ = (current_slack - lastSlack_) / dt;  // m/s (negative = slack decreasing)
-            lastSlack_ = current_slack;
-            lastSlackTime_ = now;
-        }
-
-        // --- Calculate target slack: 10% of deployed chain ---
-        float target_slack = current_chain * TARGET_SLACK_RATIO;
-        float slack_deficit = target_slack - current_slack;  // Positive = need more slack (deploy chain)
-
-        // --- Determine if we should deploy ---
-        bool shouldDeploy = false;
-        float deploy_amount = 0.0;
-
-        if (slack_deficit > 0.2) {  // Need at least 20cm more slack to deploy
-            shouldDeploy = true;
-
-            // Choose deployment amount based on slack rate
-            if (slackRate_ < AGGRESSIVE_SLACK_RATE_THRESHOLD) {
-                // Slack dropping fast - deploy aggressively
-                deploy_amount = AGGRESSIVE_DEPLOY_INCREMENT;
-                ESP_LOGD(__FILE__, "Deploy Pulse: Slack dropping fast (%.3f m/s). Deploying %.2f m aggressively.",
-                         slackRate_, deploy_amount);
-            } else {
-                // Normal deployment
-                deploy_amount = NORMAL_DEPLOY_INCREMENT;
-                ESP_LOGD(__FILE__, "Deploy Pulse: Slack deficit %.2f m, deploying %.2f m normally.",
-                         slack_deficit, deploy_amount);
-            }
-
-            // Don't exceed stage target
-            if (current_chain + deploy_amount > stageTargetChainLength) {
-                deploy_amount = stageTargetChainLength - current_chain;
-                if (deploy_amount < 0.1) shouldDeploy = false;  // Too close to target
-            }
-        }
-
-        // --- Check maximum slack limit (safety brake) ---
-        float current_depth = this->chainController->getCurrentDepth();
-        float max_acceptable_slack = current_depth * 0.5;  // Still use 50% of depth as safety limit
-
-        if (current_slack > max_acceptable_slack) {
-            shouldDeploy = false;
-            ESP_LOGD(__FILE__, "Deploy Pulse: Excessive slack (%.2f m > %.2f m). Pausing deployment.",
-                     current_slack, max_acceptable_slack);
-        }
-
-        // --- Execute deployment or wait ---
-        unsigned long next_pulse_delay_ms = DECISION_WINDOW_MS;
-
-        if (shouldDeploy) {
-            ESP_LOGD(__FILE__, "Deploy Pulse: Deploying %.2f m (chain: %.2f, slack: %.2f, target_slack: %.2f, rate: %.3f m/s)",
-                     deploy_amount, current_chain, current_slack, target_slack, slackRate_);
-
-            this->chainController->lowerAnchor(deploy_amount);
-
-            // Wait for deployment to complete
-            next_pulse_delay_ms = (unsigned long)(deploy_amount * this->chainController->getDownSpeed()) + 200;
-            if (next_pulse_delay_ms < DECISION_WINDOW_MS) {
-                next_pulse_delay_ms = DECISION_WINDOW_MS;
-            }
-        } else {
-            ESP_LOGD(__FILE__, "Deploy Pulse: No deployment needed. Chain: %.2f, Slack: %.2f, Target: %.2f",
-                     current_chain, current_slack, target_slack);
-        }
-        deployPulseEvent = sensesp::event_loop()->onDelay(next_pulse_delay_ms, [this, stageTargetChainLength]() {
-            startDeployPulse(stageTargetChainLength);
-        });
+    // Schedule monitoring check every 500ms
+    if (deployPulseEvent != nullptr) {
+        sensesp::event_loop()->remove(deployPulseEvent);
+    }
+    deployPulseEvent = sensesp::event_loop()->onRepeat(MONITOR_INTERVAL_MS, [this, stageTargetChainLength]() {
+        monitorDeployment(stageTargetChainLength);
     });
 }
+
+void DeploymentManager::monitorDeployment(float stageTargetChainLength) {
+    // Check if still in deployment stage
+    if (!isRunning || (currentStage != DEPLOY_30 && currentStage != DEPLOY_75 && currentStage != DEPLOY_100)) {
+        if (deployPulseEvent != nullptr) {
+            sensesp::event_loop()->remove(deployPulseEvent);
+            deployPulseEvent = nullptr;
+        }
+        return;
+    }
+
+    float current_chain = chainController->getChainLength();
+    float current_slack = chainController->getHorizontalSlackObservable()->get();
+    float current_depth = chainController->getCurrentDepth();
+
+    // Check if stage target reached (will be handled by updateDeployment())
+    if (current_chain >= stageTargetChainLength) {
+        return;  // Let updateDeployment() handle stage transition
+    }
+
+    // Safety brake: Check if slack is excessive
+    float max_acceptable_slack = current_depth * MAX_SLACK_RATIO;
+
+    if (current_slack > max_acceptable_slack) {
+        // Stop deployment due to excessive slack
+        if (chainController->isActive()) {
+            ESP_LOGI(__FILE__, "DeploymentManager: Excessive slack (%.2fm > %.2fm). Pausing deployment.",
+                     current_slack, max_acceptable_slack);
+            chainController->stop();
+        }
+    }
+    // Resume deployment if slack has dropped and we're not at target
+    else if (!chainController->isActive() && current_chain < stageTargetChainLength) {
+        float amount_remaining = stageTargetChainLength - current_chain;
+        if (amount_remaining > 0.1) {
+            ESP_LOGI(__FILE__, "DeploymentManager: Slack acceptable (%.2fm), resuming deployment of %.2fm",
+                     current_slack, amount_remaining);
+            chainController->lowerAnchor(amount_remaining);
+        }
+    }
+}
+
 
 void DeploymentManager::updateDeployment() {
   if (!isRunning) {
@@ -257,7 +191,7 @@ void DeploymentManager::updateDeployment() {
       else { // _commandIssuedInCurrentDeployStage is true
           // Check the *current* state of ChainController directly
           if (!chainController->isActive() || currentChainLength >= currentStageTargetLength) {
-            ESP_LOGI(__FILE__, "DROP: Initial lowerAnchor complete or target %.2f m reached (current %.2f m). Transitioning to WAIT_TIGHT.", currentStageTargetLength, currentChainLength);
+            ESP_LOGD(__FILE__, "DROP: Initial lowerAnchor complete or target %.2f m reached (current %.2f m). Transitioning to WAIT_TIGHT.", currentStageTargetLength, currentChainLength);
             transitionTo(WAIT_TIGHT); // This will reset _commandIssuedInCurrentDeployStage
             stageStartTime = millis(); // Start the timer for the next (WAIT_TIGHT) stage
           }
@@ -276,7 +210,7 @@ void DeploymentManager::updateDeployment() {
 
     case HOLD_DROP:
       if (millis() - stageStartTime >= 2000) { // hold for 2s
-        ESP_LOGI(__FILE__, "HOLD_DROP: Hold time complete. Transitioning to DEPLOY_30.");
+        ESP_LOGD(__FILE__, "HOLD_DROP: Hold time complete. Transitioning to DEPLOY_30.");
         transitionTo(DEPLOY_30);
         currentStageTargetLength = 0.0;
       }
@@ -285,25 +219,24 @@ void DeploymentManager::updateDeployment() {
      case DEPLOY_30:
       // Check if we've reached the stage's target
       if (currentChainLength >= chain30) {
-        ESP_LOGI(__FILE__, "DEPLOY_30: Target %.2f m reached (current %.2f m). Transitioning to WAIT_30.", chain30, currentChainLength);
+        ESP_LOGI(__FILE__, "DEPLOY_30: Target %.2f m reached. Transitioning to WAIT_30.", chain30);
         if (deployPulseEvent != nullptr) {
             sensesp::event_loop()->remove(deployPulseEvent);
-            deployPulseEvent = nullptr; // Stop the deployment pulses
+            deployPulseEvent = nullptr;
+        }
+        if (chainController->isActive()) {
+            chainController->stop();
         }
         transitionTo(WAIT_30);
         stageStartTime = millis();
-        break; // Exit switch after transition
+        break;
       }
 
-      // If not at target, ensure pulses are started.
+      // Start continuous deployment if not already started
       if (deployPulseEvent == nullptr) {
-        ESP_LOGI(__FILE__, "DEPLOY_30: Initiating first deployment pulse for stage.");
-        startDeployPulse(chain30); // Pass the target for this stage
+        ESP_LOGI(__FILE__, "DEPLOY_30: Starting continuous deployment to %.2fm", chain30);
+        startContinuousDeployment(chain30);
       }
-      // The updateDeployment() loop will continue to run, and the deployPulseEvent
-      // will handle commanding the ChainController in the background.
-      // updateDeployment() will simply check 'currentChainLength >= chain30'
-      // on each tick until it's met.
       break;
 
     case WAIT_30:
@@ -318,7 +251,7 @@ void DeploymentManager::updateDeployment() {
 
     case HOLD_30:
       if (millis() - stageStartTime >= 30000) { // hold for 30s
-        ESP_LOGI(__FILE__, "HOLD_30: Hold time complete. Transitioning to DEPLOY_75.");
+        ESP_LOGD(__FILE__, "HOLD_30: Hold time complete. Transitioning to DEPLOY_75.");
         transitionTo(DEPLOY_75);
         currentStageTargetLength = 0.0;
       }
@@ -326,18 +259,22 @@ void DeploymentManager::updateDeployment() {
 
     case DEPLOY_75:
       if (currentChainLength >= chain75) {
-        ESP_LOGI(__FILE__, "DEPLOY_75: Target %.2f m reached (current %.2f m). Transitioning to WAIT_75.", chain75, currentChainLength);
+        ESP_LOGI(__FILE__, "DEPLOY_75: Target %.2f m reached. Transitioning to WAIT_75.", chain75);
         if (deployPulseEvent != nullptr) {
             sensesp::event_loop()->remove(deployPulseEvent);
             deployPulseEvent = nullptr;
+        }
+        if (chainController->isActive()) {
+            chainController->stop();
         }
         transitionTo(WAIT_75);
         stageStartTime = millis();
         break;
       }
+      // Start continuous deployment if not already started
       if (deployPulseEvent == nullptr) {
-        ESP_LOGI(__FILE__, "DEPLOY_75: Initiating first deployment pulse for stage.");
-        startDeployPulse(chain75);
+        ESP_LOGI(__FILE__, "DEPLOY_75: Starting continuous deployment to %.2fm", chain75);
+        startContinuousDeployment(chain75);
       }
       break;
 
@@ -353,7 +290,7 @@ void DeploymentManager::updateDeployment() {
 
     case HOLD_75:
       if (millis() - stageStartTime >= 75000) { // hold for 75s
-        ESP_LOGI(__FILE__, "HOLD_75: Hold time complete. Transitioning to DEPLOY_100.");
+        ESP_LOGD(__FILE__, "HOLD_75: Hold time complete. Transitioning to DEPLOY_100.");
         transitionTo(DEPLOY_100);
         currentStageTargetLength = 0.0;
       }
@@ -361,18 +298,22 @@ void DeploymentManager::updateDeployment() {
 
     case DEPLOY_100:
       if (currentChainLength >= totalChainLength) {
-        ESP_LOGI(__FILE__, "DEPLOY_100: Target %.2f m reached (current %.2f m). Transitioning to COMPLETE.");
+        ESP_LOGI(__FILE__, "DEPLOY_100: Target %.2f m reached. Transitioning to COMPLETE.", totalChainLength);
         if (deployPulseEvent != nullptr) {
             sensesp::event_loop()->remove(deployPulseEvent);
             deployPulseEvent = nullptr;
+        }
+        if (chainController->isActive()) {
+            chainController->stop();
         }
         transitionTo(COMPLETE);
         stop(); // Ensure stop is called at completion
         break;
       }
+      // Start continuous deployment if not already started
       if (deployPulseEvent == nullptr) {
-        ESP_LOGI(__FILE__, "DEPLOY_100: Initiating first deployment pulse for stage.");
-        startDeployPulse(totalChainLength);
+        ESP_LOGI(__FILE__, "DEPLOY_100: Starting continuous deployment to %.2fm", totalChainLength);
+        startContinuousDeployment(totalChainLength);
       }
       break;
 

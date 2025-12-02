@@ -170,7 +170,7 @@ void setup() {
   float saved_length = prefs.getFloat("length", 0.0);
   prefs.end();
 
-  ESP_LOGI(__FILE__, "the saved chain length is %f", saved_length );
+  ESP_LOGD(__FILE__, "the saved chain length is %f", saved_length );
 
   /* Digital inputs */
   auto* di1_input = new DigitalInputChange(di1_gpio, INPUT_PULLDOWN, CHANGE, "/di1/digital_input");
@@ -243,11 +243,11 @@ void setup() {
 
   /* Save the chain length function */
   auto save_chain_length = [accumulator]() {
-    if(ignore_input) {  
+    if(ignore_input) {
       return;
     }
     float current_length = accumulator->get();
-    ESP_LOGI(__FILE__, "Deployed chain of %f saved to nvm.", current_length);
+    // ESP_LOGD(__FILE__, "Deployed chain of %f saved to nvm.", current_length);
     Preferences prefs;
     prefs.begin("chain", false);  // false = writeable
     prefs.putFloat("length", current_length);
@@ -304,28 +304,28 @@ void setup() {
   auto* counter_handler = new LambdaConsumer<int>( [
     gypsy_circum, max_chain, direction, save_chain_length, accumulator
      ](int input) {
-    if(ignore_input) {  
+    if(ignore_input) {
       return;
     }
-      ESP_LOGI(__FILE__, "the input change is %d", input);
+      // ESP_LOGD(__FILE__, "the input change is %d", input);
     if (input == 1) {
-        float current_value = accumulator->get(); 
+        float current_value = accumulator->get();
 
-      ESP_LOGI(__FILE__, "The Gypsy is turning");
+      // ESP_LOGD(__FILE__, "The Gypsy is turning");
       if (direction->get() == "up") {
         if(current_value - gypsy_circum < 0) {
-            ESP_LOGI(__FILE__, "Already at 0m of Chain ");
+            // ESP_LOGD(__FILE__, "Already at 0m of Chain ");
         } else {
             accumulator->set(-1);
-            ESP_LOGI(__FILE__, "Decrement Deployed Chain");
+            // ESP_LOGD(__FILE__, "Decrement Deployed Chain");
         }
 
       } else {
         if(current_value + gypsy_circum > max_chain) {
-            ESP_LOGI(__FILE__, "Already at the Max %fm Chain Length", max_chain);
+            // ESP_LOGD(__FILE__, "Already at the Max %fm Chain Length", max_chain);
         } else {
             accumulator->set(1);
-            ESP_LOGI(__FILE__, "Increment Deployed Chain");
+            // ESP_LOGD(__FILE__, "Increment Deployed Chain");
         }
         
       }
@@ -342,7 +342,7 @@ void setup() {
     if (input == 1) {
       accumulator->reset();
       accumulator->set(0);
-      ESP_LOGI(__FILE__, "Deployed chain reset to 0");
+      ESP_LOGD(__FILE__, "Deployed chain reset to 0");
       save_chain_length();
     }
   });

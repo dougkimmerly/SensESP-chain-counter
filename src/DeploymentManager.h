@@ -48,11 +48,6 @@ private:
   float totalChainLength = 0.0;       // Total chain length to deploy
   unsigned long stageStartTime = 0;   // For timing hold periods
 
-  // Slack-based control members
-  float lastSlack_ = 0.0;              // Previous slack value for rate calculation
-  unsigned long lastSlackTime_ = 0;    // Timestamp of last slack measurement
-  float slackRate_ = 0.0;              // Rate of slack change (m/s), negative = decreasing
-
   // distance variables
   float anchorDepth;                  // Depth when deployment starts
   float targetChainLength;            // Total chain to deploy (duplicate of totalChainLength - consider consolidating)
@@ -63,12 +58,9 @@ private:
   float chain75;                      // Actual chain length at 75% deployment
   bool _commandIssuedInCurrentDeployStage = false;
 
-  // Slack-based deployment constants
-  static constexpr float TARGET_SLACK_RATIO = 0.10;                    // Target slack: 10% of deployed chain
-  static constexpr float AGGRESSIVE_SLACK_RATE_THRESHOLD = -0.05;     // -5cm/s = deploy aggressively
-  static constexpr float NORMAL_DEPLOY_INCREMENT = 0.5;               // 0.5m increments normally
-  static constexpr float AGGRESSIVE_DEPLOY_INCREMENT = 1.0;           // 1.0m when slack dropping fast
-  const unsigned long DECISION_WINDOW_MS = 500; // Check twice as often for faster response
+  // Continuous deployment monitoring
+  static constexpr float MAX_SLACK_RATIO = 0.85;                      // Safety brake: max slack is 85% of depth (keeps chain on seabed)
+  static constexpr unsigned long MONITOR_INTERVAL_MS = 500;           // Check conditions every 500ms
 
   // Event handle for periodic update
   reactesp::Event* updateEvent = nullptr;
@@ -78,7 +70,8 @@ private:
   float computeTargetHorizontalDistance(float chainLength, float anchorDepth);
   float currentStageTargetLength = 0.0;
   void transitionTo(Stage nextStage);
-  void startDeployPulse(float stageTargetChainLength);
+  void startContinuousDeployment(float stageTargetChainLength);
+  void monitorDeployment(float stageTargetChainLength);
 
   // Stage transition handler
   void onStageAdvance();                    // Advance to next stage
