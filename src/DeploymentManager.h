@@ -3,6 +3,8 @@
 
 #include "ChainController.h"
 #include "sensesp/signalk/signalk_value_listener.h"
+#include "sensesp/signalk/signalk_output.h"
+#include "sensesp/system/observable.h"
 #include "events.h"
 #include <functional>
 #include <cmath>
@@ -74,12 +76,19 @@ private:
   reactesp::Event* updateEvent = nullptr;
   reactesp::Event* deployPulseEvent = nullptr;
 
+  // Signal K stage publishing
+  sensesp::ObservableValue<String>* autoStageObservable_;
+
   // Private helper methods
   float computeTargetHorizontalDistance(float chainLength, float anchorDepth);
   float currentStageTargetLength = 0.0;
   void transitionTo(Stage nextStage);
   void startContinuousDeployment(float stageTargetChainLength);
   void monitorDeployment(float stageTargetChainLength);
+
+  // Stage publishing helpers
+  String getStageDisplayName(Stage stage) const;
+  void publishStage(Stage stage);
 
   // Stage transition handler
   void onStageAdvance();                    // Advance to next stage

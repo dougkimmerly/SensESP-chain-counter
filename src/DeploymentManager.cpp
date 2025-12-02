@@ -8,8 +8,15 @@ DeploymentManager::DeploymentManager(ChainController* chainCtrl)
     currentStage(IDLE),
     isRunning(false),
     dropInitiated(false),
-    updateEvent(nullptr) {
-  ESP_LOGI(__FILE__, "DeploymentManager initialized");
+    updateEvent(nullptr),
+    autoStageObservable_(new sensesp::ObservableValue<String>("Idle")) {
+
+  // Connect autoStage observable to Signal K output
+  autoStageObservable_->connect_to(
+      new sensesp::SKOutputString("navigation.anchor.autoStage", "/anchor/autoStage")
+  );
+
+  ESP_LOGI(__FILE__, "DeploymentManager initialized, autoStage publishing to Signal K");
 }
 
 void DeploymentManager::start(float scopeRatio) {
@@ -64,6 +71,9 @@ void DeploymentManager::start(float scopeRatio) {
   dropInitiated = false;
   currentStageTargetLength = 0.0;
 
+  // Publish initial stage to Signal K
+  publishStage(currentStage);
+
   ESP_LOGI(__FILE__, "DeploymentManager: Starting autoDrop. Scope: %.1f:1, Current depth: %.2f, Tide-adjusted: %.2f, Total Chain: %.2f",
            scopeRatio_, currentDepth, tideAdjustedDepth, totalChainLength);
 
@@ -86,6 +96,9 @@ void DeploymentManager::stop() {
     deployPulseEvent = nullptr;
   }
   currentStage = IDLE;
+
+  // Publish Idle state to Signal K
+  publishStage(IDLE);
 }
 
 void DeploymentManager::reset() {
@@ -344,6 +357,9 @@ void DeploymentManager::transitionTo(Stage newStage) {
     ESP_LOGI(__FILE__, "AutoDeploy: Transitioning from stage %d to %d", (int)currentStage, (int)newStage);
     currentStage = newStage;
     _commandIssuedInCurrentDeployStage = false;
+
+    // Publish new stage to Signal K
+    publishStage(newStage);
   }
 }
 
@@ -355,5 +371,38 @@ bool DeploymentManager::isAutoAnchorValid() {
     return false;
 
   return true;
+}
+
+String DeploymentManager::getStageDisplayName(Stage stage) const {
+    switch (stage) {
+        case IDLE:
+            return "Idle";
+        case DROP:
+            return "Initial Drop";
+        case WAIT_TIGHT:
+        case HOLD_DROP:
+            return "Alignment";
+        case DEPLOY_30:
+            return "Deploy 40";
+        case WAIT_30:
+        case HOLD_30:
+            return "Digin 40";
+        case DEPLOY_75:
+            return "Deploy 80";
+        case WAIT_75:
+        case HOLD_75:
+            return "Digin 80";
+        case DEPLOY_100:
+            return "Final Deploy";
+        case COMPLETE:
+            return "Idle";
+        default:
+            return "Unknown";
+    }
+}
+
+void DeploymentManager::publishStage(Stage stage) {
+    String displayName = getStageDisplayName(stage);
+    autoStageObservable_->set(displayName);
 }
 
