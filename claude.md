@@ -37,6 +37,14 @@ This file is your starting point for understanding the codebase. Follow the link
 
 ### For Development Tasks
 
+- **[ARCHITECTURE_MAP.md](docs/ARCHITECTURE_MAP.md)** - Visual system overview
+  - Component interaction diagrams
+  - State flow visualizations
+  - Data flow during operations
+  - When things go wrong (error handling)
+  - How to add new features
+  - Read this to understand the big picture
+
 - **[DEPLOYMENT_REFACTOR_PLAN.md](docs/DEPLOYMENT_REFACTOR_PLAN.md)** - Current implementation status and architecture decisions
   - Deployment and retrieval system details
   - Problem analysis and solutions applied
@@ -50,6 +58,13 @@ This file is your starting point for understanding the codebase. Follow the link
   - Integration points with other systems
   - Use when implementing features that interact with ChainController
 
+- **[QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md)** - Code locations and constants
+  - File locations by function
+  - Constants reference
+  - Debugging tips
+  - Signal K paths
+  - Build commands
+
 ### README Files
 - **[README.md](README.md)** - Setup, building, and running the firmware
   - Development environment setup
@@ -61,23 +76,28 @@ This file is your starting point for understanding the codebase. Follow the link
 ## Quick Reference by Task
 
 ### "I need to fix a bug in deployment"
-1. Read [CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) to understand the flow
-2. Check [DEPLOYMENT_REFACTOR_PLAN.md](docs/DEPLOYMENT_REFACTOR_PLAN.md) for current implementation details
-3. Reference [mcp_chaincontroller.md](docs/mcp_chaincontroller.md) for ChainController API
+1. [ARCHITECTURE_MAP.md](docs/ARCHITECTURE_MAP.md) - Section: "Deployment State Flow" & "When Things Go Wrong"
+2. [DEPLOYMENT_REFACTOR_PLAN.md](docs/DEPLOYMENT_REFACTOR_PLAN.md) for current implementation details
+3. [QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md) to find the exact code location
 
 ### "I need to understand how slack calculation works"
-1. Start with [mcp_chaincontroller.md](docs/mcp_chaincontroller.md) - Section: "Slack Calculation" and "Catenary Physics Model"
-2. Look at `calculateAndPublishHorizontalSlack()` in [src/ChainController.cpp](src/ChainController.cpp)
-3. See Constants section for catenary physics parameters
+1. [ARCHITECTURE_MAP.md](docs/ARCHITECTURE_MAP.md) - Section: "Slack Calculation Flow"
+2. [mcp_chaincontroller.md](docs/mcp_chaincontroller.md) - "Slack Calculation" & "Catenary Physics Model"
+3. Code: `calculateAndPublishHorizontalSlack()` in [src/ChainController.cpp](src/ChainController.cpp):305
 
 ### "I need to add a new feature to the deployment process"
-1. Read [DEPLOYMENT_REFACTOR_PLAN.md](docs/DEPLOYMENT_REFACTOR_PLAN.md) for current state machine
-2. Review [mcp_chaincontroller.md](docs/mcp_chaincontroller.md) for what ChainController can do
-3. Look at [src/DeploymentManager.cpp](src/DeploymentManager.cpp) for the deployment state machine
+1. [ARCHITECTURE_MAP.md](docs/ARCHITECTURE_MAP.md) - Understand state flows and data flow
+2. [DEPLOYMENT_REFACTOR_PLAN.md](docs/DEPLOYMENT_REFACTOR_PLAN.md) - Current implementation
+3. [QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md) - Find code locations
 
 ### "I need to understand the architecture"
-1. [CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) - Read the entire file for architecture overview
-2. [mcp_chaincontroller.md](docs/mcp_chaincontroller.md) - Understand the core controller
+1. [CODEBASE_OVERVIEW.md](docs/CODEBASE_OVERVIEW.md) - Architecture & design
+2. [ARCHITECTURE_MAP.md](docs/ARCHITECTURE_MAP.md) - Visual diagrams & flows
+3. [mcp_chaincontroller.md](docs/mcp_chaincontroller.md) - Core controller details
+
+### "I need to find a specific piece of code"
+1. [QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md) - "File Locations by Function"
+2. Use Ctrl+F to search for file:line references
 
 ### "I need to work with the build system"
 1. [README.md](README.md) - Build and upload instructions
