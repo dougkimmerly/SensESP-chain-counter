@@ -12,8 +12,13 @@ public:
   // Constructor
   DeploymentManager(ChainController* chainCtrl);
   
+  // Scope ratio constants
+  static constexpr float MIN_SCOPE_RATIO = 3.0;
+  static constexpr float MAX_SCOPE_RATIO = 10.0;
+  static constexpr float DEFAULT_SCOPE_RATIO = 5.0;
+
   // Public methods to control the deployment sequence
-  void start();           // Begin/restart deployment sequence
+  void start(float scopeRatio = DEFAULT_SCOPE_RATIO);  // Begin deployment with optional scope ratio
   void stop();            // Cancel/deactivate/deployment stop
   void reset();           // Reset internal state for new deployment
   bool isAutoAnchorValid(); // Check if auto anchor deployment is valid
@@ -42,6 +47,9 @@ private:
   // Flags for flow control
   bool isRunning = false;     // Is deployment active?
   bool dropInitiated = false; // Has the initial drop been triggered?
+
+  // Scope ratio for chain length calculation
+  float scopeRatio_ = DEFAULT_SCOPE_RATIO;
 
   // Timing and deployment parameters
   float targetDropDepth = 0.0;        // Target depth for initial drop

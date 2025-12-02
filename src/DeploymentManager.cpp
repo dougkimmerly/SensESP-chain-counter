@@ -12,18 +12,32 @@ DeploymentManager::DeploymentManager(ChainController* chainCtrl)
   ESP_LOGI(__FILE__, "DeploymentManager initialized");
 }
 
-void DeploymentManager::start() {
+void DeploymentManager::start(float scopeRatio) {
   if (isRunning) return; // already active
   if (!isAutoAnchorValid()) return;  // invalid conditions
 
   isRunning = true;
 
-  float currentDepth = chainController->getDepthListener()->get();
+  // Validate and clamp scope ratio
+  if (scopeRatio < MIN_SCOPE_RATIO) {
+      ESP_LOGW(__FILE__, "Scope ratio %.1f below minimum, clamping to %.1f", scopeRatio, MIN_SCOPE_RATIO);
+      scopeRatio = MIN_SCOPE_RATIO;
+  } else if (scopeRatio > MAX_SCOPE_RATIO) {
+      ESP_LOGW(__FILE__, "Scope ratio %.1f above maximum, clamping to %.1f", scopeRatio, MAX_SCOPE_RATIO);
+      scopeRatio = MAX_SCOPE_RATIO;
+  }
+  scopeRatio_ = scopeRatio;
+
+  // Get current depth and tide-adjusted depth for chain calculations
+  float currentDepth = chainController->getCurrentDepth();
+  float tideAdjustedDepth = chainController->getTideAdjustedDepth();
   float currentDistance = chainController->getDistanceListener()->get();
 
-  targetDropDepth = currentDepth + 4.0; // initial slack
-  anchorDepth = targetDropDepth - 2.0;          // anchor depth
-  totalChainLength = 5 * (targetDropDepth - 2);
+  // Use tide-adjusted depth for deployment calculations
+  // This ensures adequate chain for high tide conditions
+  targetDropDepth = tideAdjustedDepth + 4.0; // initial slack
+  anchorDepth = targetDropDepth - 2.0;       // anchor depth
+  totalChainLength = scopeRatio_ * (targetDropDepth - 2);
   chain30 = 0.40 * totalChainLength;
   chain75 = 0.80 * totalChainLength;
 
@@ -34,23 +48,24 @@ void DeploymentManager::start() {
   targetDistance75 = computeTargetHorizontalDistance(chain75, anchorDepth);
 
   ESP_LOGI(__FILE__, "DeploymentManager: Target distances - Init: %.2f, 30%%: %.2f, 75%%: %.2f",
-           targetDistanceInit, targetDistance30, targetDistance75);  
+           targetDistanceInit, targetDistance30, targetDistance75);
 
-    if (totalChainLength < 10.0) { 
+    if (totalChainLength < 10.0) {
       ESP_LOGW(__FILE__, "DeploymentManager: Calculated totalChainLength (%.2f m) is too small. Capping at 10.0 m.", totalChainLength);
-      totalChainLength = 10.0; 
+      totalChainLength = 10.0;
   }
-  if (anchorDepth < 0.0) { 
+  if (anchorDepth < 0.0) {
       ESP_LOGW(__FILE__, "DeploymentManager: Calculated anchorDepth (%.2f m) was negative, setting to 0.0 m.", anchorDepth);
       anchorDepth = 0.0;
   }
-  
+
   // Reset stage and flags
   currentStage = DROP;
   dropInitiated = false;
   currentStageTargetLength = 0.0;
 
-  ESP_LOGI(__FILE__, "DeploymentManager: Starting autoDrop. Initial depth: %.2f, Target Drop Depth: %.2f, Total Chain: %.2f", (targetDropDepth-2), targetDropDepth, totalChainLength);
+  ESP_LOGI(__FILE__, "DeploymentManager: Starting autoDrop. Scope: %.1f:1, Current depth: %.2f, Tide-adjusted: %.2f, Total Chain: %.2f",
+           scopeRatio_, currentDepth, tideAdjustedDepth, totalChainLength);
 
   // Schedule the tick/update
   if (updateEvent != nullptr) {

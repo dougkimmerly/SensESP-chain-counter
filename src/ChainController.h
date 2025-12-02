@@ -55,6 +55,13 @@ public:
 
     sensesp::SKValueListener<float>* getDepthListener() const { return depthListener_; }
     sensesp::SKValueListener<float>* getDistanceListener() const { return distanceListener_; }
+    sensesp::SKValueListener<float>* getTideHeightNowListener() const { return tideHeightNowListener_; }
+    sensesp::SKValueListener<float>* getTideHeightHighListener() const { return tideHeightHighListener_; }
+
+    // Tide-related getters
+    float getTideHeightNow() const;
+    float getTideHeightHigh() const;
+    float getTideAdjustedDepth() const;
 
     // Public method to check if controller is actively controlling the windlass
     bool isActivelyControlling() const { return state_ != ChainState::IDLE; }
@@ -87,6 +94,8 @@ private:
     sensesp::SKValueListener<float>* depthListener_;
     sensesp::SKValueListener<float>* distanceListener_;
     sensesp::SKValueListener<float>* windSpeedListener_;  // Wind speed for catenary calculations
+    sensesp::SKValueListener<float>* tideHeightNowListener_;   // Current tide height
+    sensesp::SKValueListener<float>* tideHeightHighListener_;  // High tide height
     sensesp::ObservableValue<float>* horizontalSlack_; // The ObservableValue for the calculated slack
 
     void updateHorizontalSlack(float slack);

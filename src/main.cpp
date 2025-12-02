@@ -508,13 +508,20 @@ void setup() {
             commandDelayPtr = nullptr;
         });
     }
-    if(input == "autoDrop") {
-      deploymentManager->start();
-      // commandDelayPtr = event_loop()->onDelay(1800000, []() {
-      //   chainController->stop();
-      //   deploymentManager->stop();
-      //   commandDelayPtr = nullptr;
-      // });
+    if(input.startsWith("autoDrop")) {
+      float scopeRatio = 5.0;  // Default scope ratio
+
+      // Extract numeric suffix if present (e.g., "autoDrop7" → 7.0)
+      if (input.length() > 8) {  // "autoDrop" is 8 characters
+          String suffix = input.substring(8);
+          float parsedRatio = suffix.toFloat();
+          if (parsedRatio > 0) {
+              scopeRatio = parsedRatio;
+          }
+      }
+
+      ESP_LOGI(__FILE__, "Starting autoDrop with scope ratio %.1f:1", scopeRatio);
+      deploymentManager->start(scopeRatio);
     }
     if(input == "autoRetrieve") {
       ESP_LOGI(__FILE__, "AUTO-RETRIEVE command received");

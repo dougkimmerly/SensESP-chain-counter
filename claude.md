@@ -114,11 +114,15 @@ This file is your starting point for understanding the codebase. Follow the link
 - [x] Fixed retrieval relay wear (added cooldown and hysteresis)
 - [x] Corrected slack calculation for 2m bow height offset
 - [x] Removed debug logging from slack calculations
+- [x] Added tide-adjusted depth calculation for deployment
+- [x] Added configurable scope ratio (autoDrop3, autoDrop7, etc.)
 
-### 🔧 Key Fixes Applied
-- **Slack Calculation**: Now accounts for bow height (2m above water) when computing effective depth
-- **Deployment**: Changed from pulsed increments (0.5m/1.0m) to continuous deployment with monitoring
-- **Retrieval**: Added 3-second cooldown and 1.0m minimum raise threshold to prevent relay wear
+### 🔧 Key Features
+- **Tide-Adjusted Deployment**: Calculates chain for high tide conditions using `environment.tide.heightNow` and `environment.tide.heightHigh`
+- **Configurable Scope**: `autoDrop` accepts scope ratio suffix (e.g., `autoDrop7` for 7:1, range 3.0-10.0)
+- **Slack Calculation**: Accounts for bow height (2m above water) when computing effective depth
+- **Deployment**: Continuous deployment with monitoring every 500ms
+- **Retrieval**: 3-second cooldown and 1.0m minimum raise threshold to prevent relay wear
 
 ---
 

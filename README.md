@@ -69,6 +69,38 @@ When GPS distance is unavailable (boat directly over anchor), slack equals the f
 - Horizontal reach: ~4.17m
 - If GPS distance = 0: Slack = 4.17m
 
+### Tide-Adjusted Deployment
+
+The system accounts for tidal changes when calculating chain length. If tide data is available from Signal K, it calculates the depth at high tide to ensure adequate chain:
+
+```
+Tide-adjusted depth = current_depth - tide_height_now + tide_height_high
+```
+
+**Example**: Anchoring at low tide
+- Current depth: 8m
+- Current tide height: 1.5m
+- High tide height: 3.0m
+- Tide-adjusted depth = 8 - 1.5 + 3.0 = 9.5m
+
+This ensures the chain deployed is sufficient for high tide conditions (deepest water).
+
+If tide data is unavailable, the system uses current depth without adjustment.
+
+### Configurable Scope Ratio
+
+The scope ratio (chain length to depth) can be specified with the `autoDrop` command:
+
+| Command | Scope Ratio | Description |
+|---------|-------------|-------------|
+| `autoDrop` | 5:1 | Default - good for most conditions |
+| `autoDrop3` | 3:1 | Minimum safe - calm conditions only |
+| `autoDrop4` | 4:1 | Light conditions |
+| `autoDrop7` | 7:1 | Heavy weather |
+| `autoDrop6.5` | 6.5:1 | Any value between 3.0-10.0 accepted |
+
+Values outside 3.0-10.0 are clamped with a warning log.
+
 ### Deployment Sequence
 
 The deployment uses a multi-stage FSM to gradually deploy the anchor:
@@ -81,6 +113,8 @@ DROP → WAIT_TIGHT → HOLD_DROP
 ```
 
 **Key features:**
+- **Tide-Adjusted Calculations**: Uses high tide depth for chain length calculation
+- **Configurable Scope**: Scope ratio can be set via `autoDrop` command
 - **Continuous Monitoring**: Every 500ms, checks if slack exceeds safety limit (85% of depth)
 - **Safety Brake**: Automatically pauses deployment if slack becomes excessive, resumes when slack drops
 - **Distance-Based Stages**: Waits for GPS distance to reach target before moving to next stage
@@ -141,6 +175,8 @@ The system receives the following values from Signal K:
 | `environment.depth.belowSurface` | Water depth below surface | Slack calculation, deployment targets |
 | `navigation.anchor.distanceFromBow` | GPS distance to anchor | Slack calculation (horizontal reach) |
 | `environment.wind.speedTrue` | True wind speed | Catenary force estimation |
+| `environment.tide.heightNow` | Current tide height | Tide-adjusted depth calculation |
+| `environment.tide.heightHigh` | High tide height | Tide-adjusted depth calculation |
 
 ## Build & Setup
 
@@ -237,6 +273,8 @@ For detailed information, see:
 
 ### Recent Changes
 
+- **Tide-Adjusted Deployment**: Chain calculations now account for tide changes via `environment.tide.heightNow` and `environment.tide.heightHigh` Signal K paths
+- **Configurable Scope Ratio**: `autoDrop` command now accepts scope ratio suffix (e.g., `autoDrop7` for 7:1 scope, range 3.0-10.0)
 - **Centralized Catenary Physics**: All slack calculations now use consistent physics model
 - **Continuous Deployment**: Replaced pulsed deployment (0.5m/1.0m increments) with single large deployment monitored every 500ms
 - **Safety Brake**: Deployment automatically pauses and resumes based on slack levels
@@ -249,3 +287,4 @@ For detailed information, see:
 - Catenary physics assumes relatively straight chain (scope ratio > 2:1)
 - Wind and current estimation is approximate; actual forces vary by boat shape
 - GPS distance data must be available for accurate slack calculation (0 distance is handled but less accurate)
+- Tide data must be available in Signal K for tide adjustment to work; falls back to current depth if unavailable

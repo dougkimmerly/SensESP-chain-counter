@@ -56,7 +56,9 @@ ChainController::ChainController(
     horizontalSlack_(new sensesp::ObservableValue<float>(0.0)),
     depthListener_(new sensesp::SKValueListener<float>("environment.depth.belowSurface", 2000, "/depth/sk")),
     distanceListener_(new sensesp::SKValueListener<float>("navigation.anchor.distanceFromBow", 2000, "/distance/sk")),
-    windSpeedListener_(new sensesp::SKValueListener<float>("environment.wind.speedTrue", 2000, "/wind/sk"))
+    windSpeedListener_(new sensesp::SKValueListener<float>("environment.wind.speedTrue", 2000, "/wind/sk")),
+    tideHeightNowListener_(new sensesp::SKValueListener<float>("environment.tide.heightNow", 2000, "/tide/heightNow/sk")),
+    tideHeightHighListener_(new sensesp::SKValueListener<float>("environment.tide.heightHigh", 2000, "/tide/heightHigh/sk"))
 {
     // Ensure relays are off at startup. PinMode setup should happen in main.cpp.
     digitalWrite(upRelayPin_, LOW);
@@ -294,6 +296,39 @@ float ChainController::getCurrentDistance() const {
         return 0.0;
     }
     return distance;
+}
+
+float ChainController::getTideHeightNow() const {
+    float tideNow = tideHeightNowListener_->get();
+    if (isnan(tideNow) || isinf(tideNow)) {
+        return 0.0;
+    }
+    return tideNow;
+}
+
+float ChainController::getTideHeightHigh() const {
+    float tideHigh = tideHeightHighListener_->get();
+    if (isnan(tideHigh) || isinf(tideHigh)) {
+        return 0.0;
+    }
+    return tideHigh;
+}
+
+float ChainController::getTideAdjustedDepth() const {
+    float currentDepth = getCurrentDepth();
+    float tideNow = getTideHeightNow();
+    float tideHigh = getTideHeightHigh();
+
+    // If tide data unavailable (both return 0), use current depth
+    if (tideNow == 0.0 && tideHigh == 0.0) {
+        return currentDepth;
+    }
+
+    // Adjust depth for high tide: depth_at_high_tide = current_depth - tide_now + tide_high
+    float adjustedDepth = currentDepth - tideNow + tideHigh;
+
+    // Ensure adjusted depth is not negative
+    return fmax(0.0, adjustedDepth);
 }
 
 void ChainController::calculateAndPublishHorizontalSlack() {

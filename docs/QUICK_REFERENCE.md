@@ -168,6 +168,13 @@ bool isMoving = chainController->isActive();  // true if LOWERING or RAISING
 bool deploying = deploymentManager->isRunning;  // Check from DeploymentManager
 ```
 
+### Check Tide-Adjusted Depth (for deployment)
+```cpp
+float tideAdjusted = chainController->getTideAdjustedDepth();  // meters at high tide
+float tideNow = chainController->getTideHeightNow();           // current tide height
+float tideHigh = chainController->getTideHeightHigh();         // high tide height
+```
+
 ---
 
 ## Signal K Paths
@@ -183,6 +190,8 @@ bool deploying = deploymentManager->isRunning;  // Check from DeploymentManager
 - `environment.depth.belowSurface` - Water depth updates
 - `navigation.anchor.distanceFromBow` - Distance updates
 - `environment.wind.speedTrue` - Wind speed for catenary calculation
+- `environment.tide.heightNow` - Current tide height for tide-adjusted deployment
+- `environment.tide.heightHigh` - High tide height for tide-adjusted deployment
 
 ---
 
