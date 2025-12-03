@@ -537,11 +537,13 @@ void setup() {
       }
 
       ESP_LOGI(__FILE__, "Starting autoDrop with scope ratio %.1f:1", scopeRatio);
+      retrievalManager->stop();  // Stop retrieval if running
       anchor_command->set("autoDrop");
       deploymentManager->start(scopeRatio);
     }
     if(input == "autoRetrieve") {
       ESP_LOGI(__FILE__, "AUTO-RETRIEVE command received");
+      deploymentManager->stop();  // Stop deployment if running (its monitoring interferes with retrieval)
       anchor_command->set("autoRetrieve");
       retrievalManager->start();
     }
