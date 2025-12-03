@@ -204,14 +204,12 @@ void RetrievalManager::updateRetrieval() {
       }
       break;
 
-    case RetrievalState::RAISING: {
-      // Check if slack has dropped below stop threshold during raising (depth-based hysteresis)
-      float stopThreshold = depth * STOP_SLACK_RATIO;
-      if (slack < stopThreshold && chainController->isActive()) {
-        ESP_LOGW(__FILE__, "RetrievalManager: Slack below threshold (%.2fm < %.2fm) during raise - stopping chain",
-                 slack, stopThreshold);
+    case RetrievalState::RAISING:
+      // Stop immediately when slack goes negative (chain is tight)
+      if (slack < STOP_SLACK_M && chainController->isActive()) {
+        ESP_LOGW(__FILE__, "RetrievalManager: Slack went negative (%.2fm) during raise - stopping chain", slack);
         chainController->stop();
-        lastRaiseTime_ = millis();  // Start cooldown after stopping due to low slack
+        lastRaiseTime_ = millis();  // Start cooldown after stopping due to negative slack
         transitionTo(RetrievalState::WAITING_FOR_SLACK);
       }
       // Wait for the chain controller to finish raising
@@ -221,7 +219,6 @@ void RetrievalManager::updateRetrieval() {
         transitionTo(RetrievalState::WAITING_FOR_SLACK);
       }
       break;
-    }
 
     case RetrievalState::WAITING_FOR_SLACK: {
       // Wait for slack to reach threshold, or switch to final pull if needed

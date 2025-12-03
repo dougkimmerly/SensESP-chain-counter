@@ -43,7 +43,7 @@ private:
   bool completed_ = false;   // Has retrieval finished?
 
   // Retrieval parameters with depth-based hysteresis
-  static constexpr float STOP_SLACK_RATIO = -0.1;        // Stop raising when slack < -10% of depth
+  static constexpr float STOP_SLACK_M = 0.0;             // Stop raising immediately when slack goes negative
   static constexpr float RESUME_SLACK_RATIO = 0.3;       // Resume raising when slack > 30% of depth
   static constexpr float MIN_RAISE_AMOUNT_M = 1.0;       // Only raise if we can get at least 1.0m
   static constexpr float COOLDOWN_AFTER_RAISE_MS = 3000; // Wait 3s after each raise before next one
