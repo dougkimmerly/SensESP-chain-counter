@@ -42,9 +42,10 @@ private:
   bool running_ = false;     // Is retrieval active?
   bool completed_ = false;   // Has retrieval finished?
 
-  // Retrieval parameters
-  static constexpr float MIN_SLACK_TO_START_M = 1.5;    // Start considering raises at 1.5m slack
-  static constexpr float MIN_RAISE_AMOUNT_M = 1.0;      // Only raise if we can get at least 1.0m
+  // Retrieval parameters with depth-based hysteresis
+  static constexpr float STOP_SLACK_RATIO = -0.1;        // Stop raising when slack < -10% of depth
+  static constexpr float RESUME_SLACK_RATIO = 0.3;       // Resume raising when slack > 30% of depth
+  static constexpr float MIN_RAISE_AMOUNT_M = 1.0;       // Only raise if we can get at least 1.0m
   static constexpr float COOLDOWN_AFTER_RAISE_MS = 3000; // Wait 3s after each raise before next one
   static constexpr float COMPLETION_THRESHOLD_M = 2.0;   // Rode length at which retrieval is complete
   static constexpr float FINAL_PULL_THRESHOLD_M = 10.0;  // When rode < depth + 10m, switch to continuous pull

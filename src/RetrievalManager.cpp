@@ -168,9 +168,10 @@ void RetrievalManager::updateRetrieval() {
           transitionTo(RetrievalState::RAISING);
         }
       } else {
-        // Slack-based retrieval phase with hysteresis and minimum raise
+        // Slack-based retrieval phase with depth-based hysteresis
         unsigned long now = millis();
         unsigned long timeSinceLastRaise = now - lastRaiseTime_;
+        float resumeThreshold = depth * RESUME_SLACK_RATIO;
 
         // Only consider raising if enough time has passed since last raise
         if (timeSinceLastRaise < COOLDOWN_AFTER_RAISE_MS) {
@@ -178,15 +179,15 @@ void RetrievalManager::updateRetrieval() {
                    (COOLDOWN_AFTER_RAISE_MS - timeSinceLastRaise) / 1000.0);
           transitionTo(RetrievalState::WAITING_FOR_SLACK);
         }
-        // Check if we have enough slack to justify a raise
-        else if (slack >= MIN_SLACK_TO_START_M) {
+        // Check if we have enough slack to justify a raise (use depth-based RESUME threshold)
+        else if (slack >= resumeThreshold) {
           // Calculate how much we should raise
           float raiseAmount = slack;
 
           // Only raise if amount is significant (prevents tiny raises)
           if (raiseAmount >= MIN_RAISE_AMOUNT_M) {
-            ESP_LOGD(__FILE__, "RetrievalManager: Slack available (%.2fm), raising %.2fm",
-                     slack, raiseAmount);
+            ESP_LOGD(__FILE__, "RetrievalManager: Slack available (%.2fm >= %.2fm), raising %.2fm",
+                     slack, resumeThreshold, raiseAmount);
             chainController->raiseAnchor(raiseAmount);
             lastRaiseTime_ = now;  // Record raise time
             transitionTo(RetrievalState::RAISING);
@@ -197,18 +198,20 @@ void RetrievalManager::updateRetrieval() {
           }
         } else {
           ESP_LOGD(__FILE__, "RetrievalManager: Insufficient slack (%.2fm < %.2fm), waiting",
-                   slack, MIN_SLACK_TO_START_M);
+                   slack, resumeThreshold);
           transitionTo(RetrievalState::WAITING_FOR_SLACK);
         }
       }
       break;
 
-    case RetrievalState::RAISING:
-      // Check if slack has gone negative during raising
-      if (slack < 0 && chainController->isActive()) {
-        ESP_LOGW(__FILE__, "RetrievalManager: Slack went negative (%.2fm) during raise - stopping chain", slack);
+    case RetrievalState::RAISING: {
+      // Check if slack has dropped below stop threshold during raising (depth-based hysteresis)
+      float stopThreshold = depth * STOP_SLACK_RATIO;
+      if (slack < stopThreshold && chainController->isActive()) {
+        ESP_LOGW(__FILE__, "RetrievalManager: Slack below threshold (%.2fm < %.2fm) during raise - stopping chain",
+                 slack, stopThreshold);
         chainController->stop();
-        lastRaiseTime_ = millis();  // Start cooldown after stopping due to negative slack
+        lastRaiseTime_ = millis();  // Start cooldown after stopping due to low slack
         transitionTo(RetrievalState::WAITING_FOR_SLACK);
       }
       // Wait for the chain controller to finish raising
@@ -218,6 +221,7 @@ void RetrievalManager::updateRetrieval() {
         transitionTo(RetrievalState::WAITING_FOR_SLACK);
       }
       break;
+    }
 
     case RetrievalState::WAITING_FOR_SLACK: {
       // Wait for slack to reach threshold, or switch to final pull if needed
@@ -225,6 +229,7 @@ void RetrievalManager::updateRetrieval() {
       unsigned long now = millis();
       unsigned long timeSinceLastRaise = now - lastRaiseTime_;
       bool cooldownExpired = (timeSinceLastRaise >= COOLDOWN_AFTER_RAISE_MS);
+      float resumeThreshold = depth * RESUME_SLACK_RATIO;
 
       if (rodeDeployed <= COMPLETION_THRESHOLD_M) {
         // Check completion first (no cooldown needed)
@@ -232,9 +237,10 @@ void RetrievalManager::updateRetrieval() {
       } else if (rodeDeployed < depth + FINAL_PULL_THRESHOLD_M) {
         // Switch to final pull phase (no cooldown needed)
         transitionTo(RetrievalState::CHECKING_SLACK);
-      } else if (slack >= MIN_SLACK_TO_START_M && cooldownExpired) {
+      } else if (slack >= resumeThreshold && cooldownExpired) {
         // Enough slack available AND cooldown expired, go back to checking
-        ESP_LOGD(__FILE__, "RetrievalManager: Slack threshold met (%.2fm), checking for next raise", slack);
+        ESP_LOGD(__FILE__, "RetrievalManager: Slack threshold met (%.2fm >= %.2fm), checking for next raise",
+                 slack, resumeThreshold);
         transitionTo(RetrievalState::CHECKING_SLACK);
       }
       // Otherwise, keep waiting (either no slack or still in cooldown)
