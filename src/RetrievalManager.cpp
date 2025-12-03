@@ -8,16 +8,13 @@ RetrievalManager::RetrievalManager(ChainController* chainCtrl)
     state_(RetrievalState::IDLE),
     running_(false),
     completed_(false),
-    updateEvent_(nullptr) {
+    updateEvent_(nullptr),
+    chainSlackListener_(nullptr) {
 
-  // Initialize chain slack listener
-  chainSlackListener_ = new sensesp::SKValueListener<float>(
-    "navigation.anchor.chainSlack",  // Signal K path for chain slack
-    500,                               // Update interval: 500ms
-    "/chainslack/sk"                   // Config path
-  );
+  // Note: We read slack directly from ChainController's observable
+  // to avoid Signal K round-trip delay
 
-  ESP_LOGI(__FILE__, "RetrievalManager: Chain slack listener initialized");
+  ESP_LOGI(__FILE__, "RetrievalManager: Initialized (reading slack from ChainController)");
 }
 
 void RetrievalManager::start() {
@@ -82,7 +79,9 @@ bool RetrievalManager::isComplete() const {
 }
 
 float RetrievalManager::getChainSlack() {
-  float slack = chainSlackListener_->get();
+  // Read directly from ChainController's observable for immediate value
+  // (avoids Signal K round-trip delay)
+  float slack = chainController->getHorizontalSlackObservable()->get();
 
   // Guard against NaN/Inf
   if (isnan(slack) || isinf(slack)) {
