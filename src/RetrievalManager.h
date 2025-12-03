@@ -18,6 +18,9 @@ public:
   bool isRunning() const; // Check if retrieval is active
   bool isComplete() const; // Check if retrieval is finished
 
+  // Completion callback - called when retrieval finishes (success or stopped)
+  void setCompletionCallback(std::function<void()> callback) { completionCallback_ = callback; }
+
 private:
   // References to core objects
   ChainController* chainController;
@@ -51,6 +54,9 @@ private:
 
   // Timing tracking
   unsigned long lastRaiseTime_ = 0;  // Timestamp of last raise command
+
+  // Completion callback
+  std::function<void()> completionCallback_ = nullptr;
 
   // Private helper methods
   void updateRetrieval();              // Main retrieval logic called periodically

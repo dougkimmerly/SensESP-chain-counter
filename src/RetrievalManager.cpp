@@ -66,6 +66,11 @@ void RetrievalManager::stop() {
   if (chainController->isActive()) {
     chainController->stop();
   }
+
+  // Notify completion callback if set
+  if (completionCallback_) {
+    completionCallback_();
+  }
 }
 
 bool RetrievalManager::isRunning() const {

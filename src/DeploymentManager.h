@@ -25,6 +25,9 @@ public:
   void reset();           // Reset internal state for new deployment
   bool isAutoAnchorValid(); // Check if auto anchor deployment is valid
 
+  // Completion callback - called when deployment finishes (success or stopped)
+  void setCompletionCallback(std::function<void()> callback) { completionCallback_ = callback; }
+
 private:
   // References to core objects
   ChainController* chainController;
@@ -78,6 +81,9 @@ private:
 
   // Signal K stage publishing
   sensesp::ObservableValue<String>* autoStageObservable_;
+
+  // Completion callback
+  std::function<void()> completionCallback_ = nullptr;
 
   // Private helper methods
   float computeTargetHorizontalDistance(float chainLength, float anchorDepth);

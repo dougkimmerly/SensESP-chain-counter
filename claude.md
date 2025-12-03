@@ -71,6 +71,21 @@ This file is your starting point for understanding the codebase. Follow the link
   - How to compile and upload firmware
   - Hardware connections and pin assignments
 
+### Framework Reference
+- **[SENSESP_GUIDE.md](docs/SENSESP_GUIDE.md)** - SensESP framework quick reference
+  - Core patterns (SKOutput, SKValueListener, ObservableValue)
+  - ReactESP event loop usage
+  - Signal K path conventions and units
+  - Links to official documentation
+  - **Read this if you need to understand SensESP patterns**
+
+- **[SIGNALK_GUIDE.md](docs/SIGNALK_GUIDE.md)** - Signal K protocol quick reference
+  - Data model (full vs delta)
+  - Common paths by category (navigation, environment, electrical, propulsion)
+  - Standard units (always SI)
+  - WebSocket and REST API usage
+  - **Read this if you need to understand Signal K paths and data format**
+
 ---
 
 ## Quick Reference by Task
@@ -104,6 +119,21 @@ This file is your starting point for understanding the codebase. Follow the link
 2. `platformio.ini` - PlatformIO configuration
 3. `.vscode/` - VSCode settings and debugging configuration
 
+### "I need to understand SensESP framework patterns"
+1. [SENSESP_GUIDE.md](docs/SENSESP_GUIDE.md) - Quick reference with code examples
+2. Official docs: https://signalk.org/SensESP/
+3. API reference: https://signalk.org/SensESP/generated/docs/
+
+### "I need to publish/listen to Signal K"
+1. [SENSESP_GUIDE.md](docs/SENSESP_GUIDE.md) - SKOutput and SKValueListener patterns
+2. [SIGNALK_GUIDE.md](docs/SIGNALK_GUIDE.md) - Signal K paths and units reference
+3. Check existing code in [ChainController.cpp](src/ChainController.cpp) for examples
+
+### "I need to find the right Signal K path"
+1. [SIGNALK_GUIDE.md](docs/SIGNALK_GUIDE.md) - Common paths by category
+2. Full path reference: https://signalk.org/specification/1.5.0/doc/vesselsBranch.html
+3. GitHub schemas: https://github.com/SignalK/specification/tree/master/schemas/groups
+
 ---
 
 ## Current Status
@@ -116,10 +146,12 @@ This file is your starting point for understanding the codebase. Follow the link
 - [x] Removed debug logging from slack calculations
 - [x] Added tide-adjusted depth calculation for deployment
 - [x] Added configurable scope ratio (autoDrop3, autoDrop7, etc.)
+- [x] Added autoStage publishing to Signal K (navigation.anchor.autoStage)
 
 ### 🔧 Key Features
 - **Tide-Adjusted Deployment**: Calculates chain for high tide conditions using `environment.tide.heightNow` and `environment.tide.heightHigh`
 - **Configurable Scope**: `autoDrop` accepts scope ratio suffix (e.g., `autoDrop7` for 7:1, range 3.0-10.0)
+- **AutoStage Publishing**: Current deployment stage published to `navigation.anchor.autoStage` (Idle, Initial Drop, Alignment, Deploy 40, Digin 40, Deploy 80, Digin 80, Final Deploy)
 - **Slack Calculation**: Accounts for bow height (2m above water) when computing effective depth
 - **Deployment**: Continuous deployment with monitoring every 500ms
 - **Retrieval**: 3-second cooldown and 1.0m minimum raise threshold to prevent relay wear

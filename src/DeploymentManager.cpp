@@ -99,6 +99,11 @@ void DeploymentManager::stop() {
 
   // Publish Idle state to Signal K
   publishStage(IDLE);
+
+  // Notify completion callback if set
+  if (completionCallback_) {
+    completionCallback_();
+  }
 }
 
 void DeploymentManager::reset() {

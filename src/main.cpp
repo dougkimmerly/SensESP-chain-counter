@@ -410,6 +410,16 @@ void setup() {
   anchor_command->connect_to(
   new SKOutputString("navigation.anchor.command", "/anchorCommand/sk") );
 
+  // Set completion callbacks for auto commands to reset anchor_command to idle
+  deploymentManager->setCompletionCallback([anchor_command]() {
+    anchor_command->set("idle");
+    ESP_LOGI(__FILE__, "autoDrop completed, command set to idle");
+  });
+  retrievalManager->setCompletionCallback([anchor_command]() {
+    anchor_command->set("idle");
+    ESP_LOGI(__FILE__, "autoRetrieve completed, command set to idle");
+  });
+
   auto* sk_timer2 = new RepeatSensor<bool>(11000, [anchor_command] () -> bool {
     anchor_command->notify();
     return true;
@@ -437,26 +447,28 @@ void setup() {
 
   */
   command_listener->connect_to(new LambdaConsumer<String>( [
-    dnRelayPin, upRelayPin, accumulator
+    dnRelayPin, upRelayPin, accumulator, anchor_command
      ](String input) {
 
       ESP_LOGI(__FILE__, "Command received is %s", input.c_str());
       if (chainController->isActive()) {
-          chainController->stop(); 
+          chainController->stop();
       }
-      if(commandDelayPtr != nullptr) { 
+      if(commandDelayPtr != nullptr) {
         event_loop()->remove(commandDelayPtr);
         commandDelayPtr=nullptr;
       }
     float chainStart = accumulator->get();
     if(input == "drop") {
         ESP_LOGI(__FILE__, "DROP command received");
+        anchor_command->set("drop");
         float drop_depth = chainController->getDepthListener()->get() + 4.0; // add 4m to the depth for slack chain on bottom
         chainController->lowerAnchor(drop_depth);
         unsigned long moveTime = chainController->getTimeout();
-         commandDelayPtr = event_loop()->onDelay(moveTime, [moveTime]() {
+         commandDelayPtr = event_loop()->onDelay(moveTime, [moveTime, anchor_command]() {
           ESP_LOGI(__FILE__, "movement timeout reached, stopping chain %1u s", moveTime);
           chainController->stop();
+          anchor_command->set("idle");
           commandDelayPtr=nullptr;
         });
     }
@@ -475,12 +487,14 @@ void setup() {
         }
 
         ESP_LOGI(__FILE__, "Raising %.2f meters", raise_amount);
+        anchor_command->set("raise");
         chainController->raiseAnchor(raise_amount);
         unsigned long moveTime = chainController->getTimeout();
 
-        commandDelayPtr = event_loop()->onDelay(moveTime, [moveTime]() {
+        commandDelayPtr = event_loop()->onDelay(moveTime, [moveTime, anchor_command]() {
             ESP_LOGI(__FILE__, "movement timeout reached, stopping chain %1u s", moveTime);
             chainController->stop();
+            anchor_command->set("idle");
             commandDelayPtr = nullptr;
         });
     }
@@ -499,12 +513,14 @@ void setup() {
         }
 
         ESP_LOGI(__FILE__, "Lowering %.2f meters", lower_amount);
+        anchor_command->set("lower");
         chainController->lowerAnchor(lower_amount);
         unsigned long moveTime = chainController->getTimeout();
 
-        commandDelayPtr = event_loop()->onDelay(moveTime, [moveTime]() {
+        commandDelayPtr = event_loop()->onDelay(moveTime, [moveTime, anchor_command]() {
             ESP_LOGI(__FILE__, "movement timeout reached, stopping chain %1u s", moveTime);
             chainController->stop();
+            anchor_command->set("idle");
             commandDelayPtr = nullptr;
         });
     }
@@ -521,16 +537,19 @@ void setup() {
       }
 
       ESP_LOGI(__FILE__, "Starting autoDrop with scope ratio %.1f:1", scopeRatio);
+      anchor_command->set("autoDrop");
       deploymentManager->start(scopeRatio);
     }
     if(input == "autoRetrieve") {
       ESP_LOGI(__FILE__, "AUTO-RETRIEVE command received");
+      anchor_command->set("autoRetrieve");
       retrievalManager->start();
     }
     if (input == "stop") {
         chainController->stop();
         deploymentManager->stop();
         retrievalManager->stop();
+        anchor_command->set("idle");
         commandDelayPtr = nullptr;
     }
     
