@@ -156,23 +156,24 @@ void DeploymentManager::monitorDeployment(float stageTargetChainLength) {
         return;  // Let updateDeployment() handle stage transition
     }
 
-    // Safety brake: Check if slack is excessive
-    float max_acceptable_slack = current_depth * MAX_SLACK_RATIO;
+    // Safety brake with hysteresis: pause at MAX_SLACK_RATIO, resume at RESUME_SLACK_RATIO
+    float pause_threshold = current_depth * MAX_SLACK_RATIO;
+    float resume_threshold = current_depth * RESUME_SLACK_RATIO;
 
-    if (current_slack > max_acceptable_slack) {
+    if (current_slack > pause_threshold) {
         // Stop deployment due to excessive slack
         if (chainController->isActive()) {
             ESP_LOGI(__FILE__, "DeploymentManager: Excessive slack (%.2fm > %.2fm). Pausing deployment.",
-                     current_slack, max_acceptable_slack);
+                     current_slack, pause_threshold);
             chainController->stop();
         }
     }
-    // Resume deployment if slack has dropped and we're not at target
-    else if (!chainController->isActive() && current_chain < stageTargetChainLength) {
+    // Resume deployment only when slack drops below the lower threshold (hysteresis)
+    else if (current_slack < resume_threshold && !chainController->isActive() && current_chain < stageTargetChainLength) {
         float amount_remaining = stageTargetChainLength - current_chain;
         if (amount_remaining > 0.1) {
-            ESP_LOGI(__FILE__, "DeploymentManager: Slack acceptable (%.2fm), resuming deployment of %.2fm",
-                     current_slack, amount_remaining);
+            ESP_LOGI(__FILE__, "DeploymentManager: Slack below resume threshold (%.2fm < %.2fm), resuming deployment of %.2fm",
+                     current_slack, resume_threshold, amount_remaining);
             chainController->lowerAnchor(amount_remaining);
         }
     }

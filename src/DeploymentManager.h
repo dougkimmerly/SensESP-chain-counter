@@ -71,8 +71,9 @@ private:
   float chain75;                      // Actual chain length at 75% deployment
   bool _commandIssuedInCurrentDeployStage = false;
 
-  // Continuous deployment monitoring
-  static constexpr float MAX_SLACK_RATIO = 0.85;                      // Safety brake: max slack is 85% of depth (keeps chain on seabed)
+  // Continuous deployment monitoring with hysteresis
+  static constexpr float MAX_SLACK_RATIO = 1.2;                       // Pause deployment when slack exceeds 120% of depth
+  static constexpr float RESUME_SLACK_RATIO = 0.6;                    // Resume deployment when slack drops below 60% of depth
   static constexpr unsigned long MONITOR_INTERVAL_MS = 500;           // Check conditions every 500ms
 
   // Event handle for periodic update
