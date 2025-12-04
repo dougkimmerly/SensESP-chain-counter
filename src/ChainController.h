@@ -90,6 +90,10 @@ private:
     float downSpeed_ = 1000.0; // default 1 sec per meter
     const float smoothing_factor_ = 0.2;
 
+    // Track when operations end for slack clamping settling period
+    unsigned long lastOperationEndTime_ = 0;
+    static constexpr unsigned long SLACK_SETTLING_MS = 5000;  // 5 seconds settling after ops
+
 
     sensesp::SKValueListener<float>* depthListener_;
     sensesp::SKValueListener<float>* distanceListener_;

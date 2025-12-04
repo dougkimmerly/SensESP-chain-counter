@@ -183,6 +183,7 @@ void ChainController::stop() {
     digitalWrite(downRelayPin_, LOW);
     calcSpeed(movement_start_time_, start_position_); // Calculate speed for the movement that was stopped
     state_ = ChainState::IDLE;
+    lastOperationEndTime_ = millis();  // Record when operation ended for slack settling
     ESP_LOGD(__FILE__, "stop: all relays off, state IDLE.");
 }
 
@@ -374,10 +375,12 @@ void ChainController::calculateAndPublishHorizontalSlack() {
             // Negative would mean boat is further than chain can reach (chain is tight)
             calculated_slack = horizontal_distance_taut - current_distance;
 
-            // During active operations (raising/lowering), clamp negative slack to 0
-            // because the catenary model breaks down during chain movement.
-            // When idle (at anchor), allow negative slack as it indicates anchor drag.
-            if (calculated_slack < 0.0 && isActivelyControlling()) {
+            // During active operations or settling period, clamp negative slack to 0
+            // because the catenary model breaks down during chain movement and
+            // GPS/sensor data needs time to stabilize after operations end.
+            // When truly idle (at anchor), allow negative slack as it indicates anchor drag.
+            bool inSettlingPeriod = (millis() - lastOperationEndTime_) < SLACK_SETTLING_MS;
+            if (calculated_slack < 0.0 && (isActivelyControlling() || inSettlingPeriod)) {
                 calculated_slack = 0.0;
             }
         }
