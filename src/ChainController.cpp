@@ -336,7 +336,7 @@ void ChainController::calculateAndPublishHorizontalSlack() {
     float current_depth = getCurrentDepth();
     float current_distance = getCurrentDistance();
 
-    // Account for bow height (2m above water) when calculating effective depth
+    // Account for bow height (2m above water) when calculating effective depth for catenary math
     static constexpr float BOW_HEIGHT_M = 2.0;
     float effective_depth = fmax(0.0, current_depth - BOW_HEIGHT_M);
 
@@ -350,10 +350,18 @@ void ChainController::calculateAndPublishHorizontalSlack() {
     if (current_chain <= 0.01 || current_depth <= 0.01 || isnan(current_chain) || isinf(current_chain) || isnan(current_depth) || isinf(current_depth) || isnan(current_distance) || isinf(current_distance)) {
         calculated_slack = 0.0;
     }
+    // --- Check if anchor has touched bottom ---
+    // If chain length < total distance from bow to seabed (bow_height + water_depth),
+    // the anchor is still falling and chain hangs vertically - there is no horizontal slack yet.
+    // Total drop distance = BOW_HEIGHT_M (bow to water) + current_depth (water to seabed)
+    else if (current_chain < current_depth + BOW_HEIGHT_M) {
+        calculated_slack = 0.0;
+    }
     // --- End Robust Validation for Input Data Sanity ---
     else {
-        // If inputs are sane, proceed with calculation.
+        // Anchor is on bottom - proceed with catenary slack calculation.
         // Use effective depth (accounting for bow height) in slack calculation
+        // because the catenary math models the curve from water surface to seabed.
         horizontal_distance_taut = computeTargetHorizontalDistance(current_chain, effective_depth);
 
         // If distance is unavailable (still 0.0), use just the taut distance as slack
