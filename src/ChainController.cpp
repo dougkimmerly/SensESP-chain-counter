@@ -369,10 +369,18 @@ void ChainController::calculateAndPublishHorizontalSlack() {
         if (current_distance <= 0.01) {
             calculated_slack = horizontal_distance_taut;
         } else {
-            // --- CORRECTED SLACK CALCULATION (allowing negative values) ---
+            // Slack = theoretical horizontal reach - actual distance to anchor
+            // Positive slack means chain has extra length lying on seabed
+            // Negative would mean boat is further than chain can reach (chain is tight)
             calculated_slack = horizontal_distance_taut - current_distance;
+
+            // During active operations (raising/lowering), clamp negative slack to 0
+            // because the catenary model breaks down during chain movement.
+            // When idle (at anchor), allow negative slack as it indicates anchor drag.
+            if (calculated_slack < 0.0 && isActivelyControlling()) {
+                calculated_slack = 0.0;
+            }
         }
-        // --- END CORRECTION ---
 
         // Check for NaN/Inf in the final result (should be caught earlier, but defensive check)
         if (isnan(calculated_slack) || isinf(calculated_slack)) {

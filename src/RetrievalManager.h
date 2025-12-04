@@ -48,7 +48,7 @@ private:
   static constexpr float MIN_RAISE_AMOUNT_M = 1.0;                // Only raise if we can get at least 1.0m
   static constexpr unsigned long COOLDOWN_AFTER_RAISE_MS = 3000;  // Wait 3s after each raise before next one
   static constexpr float COMPLETION_THRESHOLD_M = 2.0;            // Rode length at which retrieval is complete
-  static constexpr float FINAL_PULL_THRESHOLD_M = 10.0;           // When rode < depth + 10m, switch to continuous pull
+  static constexpr float FINAL_PULL_THRESHOLD_M = 3.0;            // When rode < depth + 3m, switch to continuous pull
 
   // Event handle for periodic update
   reactesp::Event* updateEvent_ = nullptr;

@@ -217,14 +217,14 @@ void RetrievalManager::updateRetrieval() {
       break;
 
     case RetrievalState::RAISING: {
-      // When chain is nearly vertical (rode < depth + bow height), the catenary model
-      // doesn't apply - slack will always be ~0. Skip slack check in this case.
-      static constexpr float BOW_HEIGHT_M = 2.0;
-      bool chainIsVertical = (rodeDeployed < depth + BOW_HEIGHT_M);
+      // Skip slack-based pausing in final pull phase or when chain is vertical.
+      // In final pull (rode < depth + 10m), the catenary model breaks down and slack
+      // readings become unreliable (often negative). Just let it raise continuously.
+      bool inFinalPull = (rodeDeployed < depth + FINAL_PULL_THRESHOLD_M);
 
       // Pause when slack drops below threshold (chain is getting tight)
-      // But skip this check when chain is vertical - just let it raise
-      if (!chainIsVertical && slack < PAUSE_SLACK_M && chainController->isActive()) {
+      // But skip this check in final pull - just let it raise to completion
+      if (!inFinalPull && slack < PAUSE_SLACK_M && chainController->isActive()) {
         ESP_LOGI(__FILE__, "RetrievalManager: Slack low (%.2fm < %.2fm) - pausing raise", slack, PAUSE_SLACK_M);
         chainController->stop();
         lastRaiseTime_ = millis();  // Start cooldown after pausing
