@@ -157,8 +157,9 @@ void RetrievalManager::updateRetrieval() {
         break;
       }
 
-      // Check if we're in final pull phase (rode < depth + 10m)
-      if (rodeDeployed < depth + FINAL_PULL_THRESHOLD_M) {
+      // Check if we're in final pull phase (rode <= depth + bow_height + threshold)
+      // This accounts for the full vertical distance from bow to seabed
+      if (rodeDeployed <= depth + BOW_HEIGHT_M + FINAL_PULL_THRESHOLD_M) {
         // Final pull phase - still need to respect cooldown to prevent relay cycling
         unsigned long now = millis();
         unsigned long timeSinceLastRaise = now - lastRaiseTime_;
@@ -183,7 +184,8 @@ void RetrievalManager::updateRetrieval() {
         // Slack-based retrieval phase with depth-based hysteresis
         unsigned long now = millis();
         unsigned long timeSinceLastRaise = now - lastRaiseTime_;
-        float resumeThreshold = depth * RESUME_SLACK_RATIO;
+        // Use the higher of resume threshold or min raise amount to avoid state cycling
+        float resumeThreshold = fmax(depth * RESUME_SLACK_RATIO, MIN_RAISE_AMOUNT_M);
 
         // Only consider raising if enough time has passed since last raise
         if (timeSinceLastRaise < COOLDOWN_AFTER_RAISE_MS) {
@@ -191,23 +193,15 @@ void RetrievalManager::updateRetrieval() {
                    (COOLDOWN_AFTER_RAISE_MS - timeSinceLastRaise) / 1000.0);
           transitionTo(RetrievalState::WAITING_FOR_SLACK);
         }
-        // Check if we have enough slack to justify a raise (use depth-based RESUME threshold)
+        // Check if we have enough slack to justify a raise
+        // resumeThreshold already incorporates MIN_RAISE_AMOUNT_M, so if slack >= resumeThreshold,
+        // we're guaranteed to have at least MIN_RAISE_AMOUNT_M to raise
         else if (slack >= resumeThreshold) {
-          // Calculate how much we should raise
-          float raiseAmount = slack;
-
-          // Only raise if amount is significant (prevents tiny raises)
-          if (raiseAmount >= MIN_RAISE_AMOUNT_M) {
-            ESP_LOGD(__FILE__, "RetrievalManager: Slack available (%.2fm >= %.2fm), raising %.2fm",
-                     slack, resumeThreshold, raiseAmount);
-            chainController->raiseAnchor(raiseAmount);
-            lastRaiseTime_ = now;  // Record raise time
-            transitionTo(RetrievalState::RAISING);
-          } else {
-            ESP_LOGD(__FILE__, "RetrievalManager: Slack (%.2fm) below minimum raise threshold (%.2fm), waiting",
-                     slack, MIN_RAISE_AMOUNT_M);
-            transitionTo(RetrievalState::WAITING_FOR_SLACK);
-          }
+          ESP_LOGD(__FILE__, "RetrievalManager: Slack available (%.2fm >= %.2fm), raising %.2fm",
+                   slack, resumeThreshold, slack);
+          chainController->raiseAnchor(slack);
+          lastRaiseTime_ = now;  // Record raise time
+          transitionTo(RetrievalState::RAISING);
         } else {
           ESP_LOGD(__FILE__, "RetrievalManager: Insufficient slack (%.2fm < %.2fm), waiting",
                    slack, resumeThreshold);
@@ -218,9 +212,9 @@ void RetrievalManager::updateRetrieval() {
 
     case RetrievalState::RAISING: {
       // Skip slack-based pausing in final pull phase or when chain is vertical.
-      // In final pull (rode < depth + 10m), the catenary model breaks down and slack
-      // readings become unreliable (often negative). Just let it raise continuously.
-      bool inFinalPull = (rodeDeployed < depth + FINAL_PULL_THRESHOLD_M);
+      // In final pull (rode <= depth + bow_height + threshold), the catenary model breaks down
+      // and slack readings become unreliable (often negative). Just let it raise continuously.
+      bool inFinalPull = (rodeDeployed <= depth + BOW_HEIGHT_M + FINAL_PULL_THRESHOLD_M);
 
       // Pause when slack drops below threshold (chain is getting tight)
       // But skip this check in final pull - just let it raise to completion
@@ -233,6 +227,7 @@ void RetrievalManager::updateRetrieval() {
       // Wait for the chain controller to finish raising
       else if (!chainController->isActive()) {
         ESP_LOGD(__FILE__, "RetrievalManager: Raising complete, rode now at %.2fm", rodeDeployed);
+        lastRaiseTime_ = millis();  // Start cooldown after raise completes
         // After raising completes, wait for slack to build up again
         transitionTo(RetrievalState::WAITING_FOR_SLACK);
       }
@@ -245,12 +240,13 @@ void RetrievalManager::updateRetrieval() {
       unsigned long now = millis();
       unsigned long timeSinceLastRaise = now - lastRaiseTime_;
       bool cooldownExpired = (timeSinceLastRaise >= COOLDOWN_AFTER_RAISE_MS);
-      float resumeThreshold = depth * RESUME_SLACK_RATIO;
+      // Use the higher of resume threshold or min raise amount to avoid state cycling
+      float resumeThreshold = fmax(depth * RESUME_SLACK_RATIO, MIN_RAISE_AMOUNT_M);
 
       if (rodeDeployed <= COMPLETION_THRESHOLD_M) {
         // Check completion first (no cooldown needed)
         transitionTo(RetrievalState::CHECKING_SLACK);
-      } else if (rodeDeployed < depth + FINAL_PULL_THRESHOLD_M && cooldownExpired) {
+      } else if (rodeDeployed <= depth + BOW_HEIGHT_M + FINAL_PULL_THRESHOLD_M && cooldownExpired) {
         // In final pull phase AND cooldown expired - go check for next raise
         transitionTo(RetrievalState::CHECKING_SLACK);
       } else if (slack >= resumeThreshold && cooldownExpired) {

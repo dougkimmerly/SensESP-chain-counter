@@ -21,7 +21,7 @@ Marine anchor chain deployment/retrieval system on ESP32 with Signal K integrati
 ## Critical Physics
 - **Bow height**: 2m from bow to water surface
 - **Slack calculation**: `slack = chain_length - sqrt(distance² + (depth + bow_height)²)` (excess chain beyond straight-line to anchor)
-- **Final pull phase**: When rode < depth + 3m, skip slack-based control
+- **Final pull phase**: When rode <= depth + bow_height + 3m, skip slack-based control
 - **Negative slack**: Indicates anchor drag (boat further than chain can reach)
 
 ## Key Constants

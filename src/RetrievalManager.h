@@ -43,12 +43,13 @@ private:
   bool completed_ = false;   // Has retrieval finished?
 
   // Retrieval parameters with depth-based hysteresis
+  static constexpr float BOW_HEIGHT_M = 2.0;                      // Height from bow roller to water surface
   static constexpr float PAUSE_SLACK_M = 0.2;                     // Pause raising when slack drops below this (chain getting tight)
   static constexpr float RESUME_SLACK_RATIO = 0.3;                // Resume raising when slack > 30% of depth
   static constexpr float MIN_RAISE_AMOUNT_M = 1.0;                // Only raise if we can get at least 1.0m
   static constexpr unsigned long COOLDOWN_AFTER_RAISE_MS = 3000;  // Wait 3s after each raise before next one
   static constexpr float COMPLETION_THRESHOLD_M = 2.0;            // Rode length at which retrieval is complete
-  static constexpr float FINAL_PULL_THRESHOLD_M = 3.0;            // When rode < depth + 3m, switch to continuous pull
+  static constexpr float FINAL_PULL_THRESHOLD_M = 3.0;            // When rode < depth + bow_height + 3m, switch to continuous pull
 
   // Event handle for periodic update
   reactesp::Event* updateEvent_ = nullptr;
