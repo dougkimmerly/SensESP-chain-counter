@@ -143,6 +143,8 @@ This file is your starting point for understanding the codebase. Follow the link
 - [x] Implemented continuous deployment monitoring (replaced pulsed system)
 - [x] Fixed retrieval relay wear (added cooldown and hysteresis)
 - [x] Corrected slack calculation for 2m bow height offset
+- [x] Fixed slack calculation physics: returns 0 when anchor hasn't touched seabed
+- [x] Added vertical chain detection in retrieval (skips slack check when catenary doesn't apply)
 - [x] Removed debug logging from slack calculations
 - [x] Added tide-adjusted depth calculation for deployment
 - [x] Added configurable scope ratio (autoDrop3, autoDrop7, etc.)
@@ -152,9 +154,9 @@ This file is your starting point for understanding the codebase. Follow the link
 - **Tide-Adjusted Deployment**: Calculates chain for high tide conditions using `environment.tide.heightNow` and `environment.tide.heightHigh`
 - **Configurable Scope**: `autoDrop` accepts scope ratio suffix (e.g., `autoDrop7` for 7:1, range 3.0-10.0)
 - **AutoStage Publishing**: Current deployment stage published to `navigation.anchor.autoStage` (Idle, Initial Drop, Alignment, Deploy 40, Digin 40, Deploy 80, Digin 80, Final Deploy)
-- **Slack Calculation**: Accounts for bow height (2m above water) when computing effective depth
-- **Deployment**: Continuous deployment with monitoring every 500ms
-- **Retrieval**: 3-second cooldown and 1.0m minimum raise threshold to prevent relay wear
+- **Slack Calculation**: Returns 0 until anchor touches seabed (chain < depth + bow_height), then uses catenary physics with bow height offset
+- **Deployment**: Continuous deployment with monitoring every 500ms, hysteresis-based pause/resume
+- **Retrieval**: Continuous raising with 0.2m pause threshold, 30% depth resume threshold, 3-second cooldown, vertical chain detection for final pull
 
 ---
 
@@ -193,10 +195,17 @@ The chain doesn't hang straight - it sags due to:
 - Horizontal forces: Wind drag + current resistance
 - Result: Reduction factor (0.80-0.99) applied to theoretical straight-line distance
 
+**Important limitations:**
+- Catenary model only applies when anchor is on seabed (chain > depth + bow_height)
+- When chain hangs vertically (final retrieval phase), slack is always 0 and catenary math is skipped
+- Bow height (2m) must be added to water depth for total chain path from bow to seabed
+
 ### Safety Limits
 - Max slack: 85% of effective depth (prevents chain from losing grip on seabed)
 - Min raise amount: 1.0m (prevents rapid relay cycling during retrieval)
 - Cooldown period: 3 seconds between raises (relay protection)
+- Pause threshold: 0.2m slack during retrieval (chain getting tight)
+- Resume threshold: 30% of depth during retrieval (enough slack built up)
 
 ---
 
@@ -219,4 +228,4 @@ The chain doesn't hang straight - it sags due to:
 
 ---
 
-Last Updated: 2025-12-02
+Last Updated: 2025-12-04
