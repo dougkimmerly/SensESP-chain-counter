@@ -20,9 +20,9 @@ Marine anchor chain deployment/retrieval system on ESP32 with Signal K integrati
 
 ## Critical Physics
 - **Bow height**: 2m from bow to water surface
-- **Catenary model**: Only valid when anchor on seabed (chain > depth + 2m)
-- **Final pull phase**: When rode < depth + 3m, skip slack-based control (catenary unreliable)
-- **Negative slack**: Clamped to 0 during active ops + 5s settling; allowed when idle (indicates anchor drag)
+- **Slack calculation**: `slack = chain_length - sqrt(distance² + (depth + bow_height)²)` (excess chain beyond straight-line to anchor)
+- **Final pull phase**: When rode < depth + 3m, skip slack-based control
+- **Negative slack**: Indicates anchor drag (boat further than chain can reach)
 
 ## Key Constants
 | Parameter | Value | Location |
@@ -35,7 +35,6 @@ Marine anchor chain deployment/retrieval system on ESP32 with Signal K integrati
 | Min raise amount | 1.0m | RetrievalManager.h |
 | Deploy pause slack | 120% of depth | DeploymentManager.h |
 | Deploy resume slack | 60% of depth | DeploymentManager.h |
-| Slack settling period | 5000ms | ChainController.h |
 
 ## Signal K Paths
 **Published:** `navigation.anchor.rodeDeployed`, `navigation.anchor.chainSlack`, `navigation.anchor.chainDirection`, `navigation.anchor.autoStage`

@@ -183,7 +183,6 @@ void ChainController::stop() {
     digitalWrite(downRelayPin_, LOW);
     calcSpeed(movement_start_time_, start_position_); // Calculate speed for the movement that was stopped
     state_ = ChainState::IDLE;
-    lastOperationEndTime_ = millis();  // Record when operation ended for slack settling
     ESP_LOGD(__FILE__, "stop: all relays off, state IDLE.");
 }
 
@@ -360,32 +359,37 @@ void ChainController::calculateAndPublishHorizontalSlack() {
     }
     // --- End Robust Validation for Input Data Sanity ---
     else {
-        // Anchor is on bottom - proceed with catenary slack calculation.
-        // Use effective depth (accounting for bow height) in slack calculation
-        // because the catenary math models the curve from water surface to seabed.
-        horizontal_distance_taut = computeTargetHorizontalDistance(current_chain, effective_depth);
+        // Anchor is on bottom - calculate slack as chain lying on seabed.
+        //
+        // SLACK CALCULATION APPROACH:
+        // Slack = total_chain - chain_needed_to_reach_current_position
+        //
+        // The chain needed to reach the anchor at current_distance is at minimum
+        // the straight-line distance from bow to anchor (Pythagorean theorem).
+        // In reality, catenary sag means we need slightly MORE chain, but for
+        // slack calculation we use the minimum (straight line) to be conservative.
+        //
+        // total_depth_from_bow = BOW_HEIGHT_M + current_depth (bow to seabed)
+        // minimum_chain_needed = sqrt(current_distance² + total_depth_from_bow²)
+        // slack = current_chain - minimum_chain_needed
 
-        // If distance is unavailable (still 0.0), use just the taut distance as slack
-        // This means all catenary sag is on the seabed
+        float total_depth_from_bow = BOW_HEIGHT_M + current_depth;
+
+        // If distance is unavailable (0.0), minimum chain is just vertical drop
+        float minimum_chain_needed;
         if (current_distance <= 0.01) {
-            calculated_slack = horizontal_distance_taut;
+            minimum_chain_needed = total_depth_from_bow;
         } else {
-            // Slack = theoretical horizontal reach - actual distance to anchor
-            // Positive slack means chain has extra length lying on seabed
-            // Negative would mean boat is further than chain can reach (chain is tight)
-            calculated_slack = horizontal_distance_taut - current_distance;
-
-            // During active operations or settling period, clamp negative slack to 0
-            // because the catenary model breaks down during chain movement and
-            // GPS/sensor data needs time to stabilize after operations end.
-            // When truly idle (at anchor), allow negative slack as it indicates anchor drag.
-            bool inSettlingPeriod = (millis() - lastOperationEndTime_) < SLACK_SETTLING_MS;
-            if (calculated_slack < 0.0 && (isActivelyControlling() || inSettlingPeriod)) {
-                calculated_slack = 0.0;
-            }
+            // Straight-line distance from bow to anchor on seabed
+            minimum_chain_needed = sqrt(pow(current_distance, 2) + pow(total_depth_from_bow, 2));
         }
 
-        // Check for NaN/Inf in the final result (should be caught earlier, but defensive check)
+        // Slack is excess chain beyond what's needed
+        // Positive = chain lying on seabed
+        // Negative = anchor has dragged (boat further than chain can reach)
+        calculated_slack = current_chain - minimum_chain_needed;
+
+        // Check for NaN/Inf in the final result
         if (isnan(calculated_slack) || isinf(calculated_slack)) {
              calculated_slack = 0.0;
         }
