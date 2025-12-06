@@ -441,9 +441,13 @@ void setup() {
      ](String input) {
 
       ESP_LOGI(__FILE__, "Command received is %s", input.c_str());
+
+      // Stop any active operations before processing new command
       if (chainController->isActive()) {
           chainController->stop();
       }
+      deploymentManager->stop();  // Always stop deployment state machine
+
       if(commandDelayPtr != nullptr) {
         event_loop()->remove(commandDelayPtr);
         commandDelayPtr=nullptr;
@@ -527,14 +531,11 @@ void setup() {
       }
 
       ESP_LOGI(__FILE__, "Starting autoDrop with scope ratio %.1f:1", scopeRatio);
-      chainController->stop();  // Stop any active raising/lowering
       anchor_command->set("autoDrop");
       deploymentManager->start(scopeRatio);
     }
     if(input == "autoRetrieve") {
       ESP_LOGI(__FILE__, "AUTO-RETRIEVE command received");
-      deploymentManager->stop();  // Stop deployment if running
-      chainController->stop();    // CRITICAL: Stop any active chain movement before starting new command
 
       // Raise all chain to 2m completion threshold
       // ChainController will auto-pause/resume based on slack
@@ -551,10 +552,8 @@ void setup() {
       }
     }
     if (input == "stop") {
-        chainController->stop();
-        deploymentManager->stop();
+        // Both managers already stopped at top of handler
         anchor_command->set("idle");
-        commandDelayPtr = nullptr;
     }
     
 
