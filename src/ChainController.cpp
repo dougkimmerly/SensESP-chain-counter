@@ -56,9 +56,9 @@ ChainController::ChainController(
     horizontalSlack_(new sensesp::ObservableValue<float>(0.0)),
     depthListener_(new sensesp::SKValueListener<float>("environment.depth.belowSurface", 2000, "/depth/sk")),
     distanceListener_(new sensesp::SKValueListener<float>("navigation.anchor.distanceFromBow", 2000, "/distance/sk")),
-    windSpeedListener_(new sensesp::SKValueListener<float>("environment.wind.speedTrue", 2000, "/wind/sk")),
-    tideHeightNowListener_(new sensesp::SKValueListener<float>("environment.tide.heightNow", 2000, "/tide/heightNow/sk")),
-    tideHeightHighListener_(new sensesp::SKValueListener<float>("environment.tide.heightHigh", 2000, "/tide/heightHigh/sk"))
+    windSpeedListener_(new sensesp::SKValueListener<float>("environment.wind.speedTrue", 30000, "/wind/sk")),  // 30s - only for catenary estimate
+    tideHeightNowListener_(new sensesp::SKValueListener<float>("environment.tide.heightNow", 60000, "/tide/heightNow/sk")),  // 60s - tide changes slowly
+    tideHeightHighListener_(new sensesp::SKValueListener<float>("environment.tide.heightHigh", 300000, "/tide/heightHigh/sk"))  // 5min - rarely changes
 {
     // Ensure relays are off at startup. PinMode setup should happen in main.cpp.
     digitalWrite(upRelayPin_, LOW);
