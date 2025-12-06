@@ -534,6 +534,7 @@ void setup() {
     if(input == "autoRetrieve") {
       ESP_LOGI(__FILE__, "AUTO-RETRIEVE command received");
       deploymentManager->stop();  // Stop deployment if running
+      chainController->stop();    // CRITICAL: Stop any active chain movement before starting new command
 
       // Raise all chain to 2m completion threshold
       // ChainController will auto-pause/resume based on slack
