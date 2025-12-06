@@ -99,9 +99,9 @@ void ChainController::lowerAnchor(float amount) {
     updateTimeout(amount, downSpeed_); // Use the requested 'amount' for timeout calculation
     state_ = ChainState::LOWERING;
 
-    // Activate relay immediately
-    digitalWrite(downRelayPin_, HIGH);
-    digitalWrite(upRelayPin_, LOW);
+    // Activate relay immediately - turn OFF opposite relay FIRST to prevent relay fighting
+    digitalWrite(upRelayPin_, LOW);     // Turn OFF opposite relay FIRST
+    digitalWrite(downRelayPin_, HIGH);  // Turn ON desired relay SECOND
 
     ESP_LOGI(__FILE__, "lowerAnchor: lowering to absolute target %.2f m (requested %.2f m from current %.2f m)", target_, amount, current);
 
@@ -136,9 +136,9 @@ void ChainController::raiseAnchor(float amount) {
     paused_for_slack_ = false;
     last_slack_action_time_ = 0;
 
-    // Activate relay immediately
-    digitalWrite(upRelayPin_, HIGH);
-    digitalWrite(downRelayPin_, LOW);
+    // Activate relay immediately - turn OFF opposite relay FIRST to prevent relay fighting
+    digitalWrite(downRelayPin_, LOW);   // Turn OFF opposite relay FIRST
+    digitalWrite(upRelayPin_, HIGH);    // Turn ON desired relay SECOND
 
     ESP_LOGI(__FILE__, "raiseAnchor: raising to absolute target %.2f m (requested %.2f m from current %.2f m)", target_, amount, current);
 
@@ -416,17 +416,19 @@ void ChainController::calculateAndPublishHorizontalSlack() {
     else {
         // Anchor is on bottom - calculate slack as chain lying on seabed.
         //
-        // SLACK CALCULATION APPROACH:
+        // SLACK CALCULATION APPROACH (CATENARY-AWARE):
         // Slack = total_chain - chain_needed_to_reach_current_position
         //
-        // The chain needed to reach the anchor at current_distance is at minimum
-        // the straight-line distance from bow to anchor (Pythagorean theorem).
-        // In reality, catenary sag means we need slightly MORE chain, but for
-        // slack calculation we use the minimum (straight line) to be conservative.
+        // The chain needed is calculated using the SAME catenary-aware method as
+        // target distance calculation (computeTargetHorizontalDistance).
+        // This ensures consistency between slack and target distance calculations.
         //
-        // total_depth_from_bow = BOW_HEIGHT_M + current_depth (bow to seabed)
-        // minimum_chain_needed = sqrt(current_distance² + total_depth_from_bow²)
-        // slack = current_chain - minimum_chain_needed
+        // We use the INVERSE of computeTargetHorizontalDistance:
+        // Given current_distance, find the chain length that would put anchor at that distance
+        //
+        // For catenary-aware calculation:
+        // actual_distance = sqrt(chain² - depth²) * reductionFactor
+        // Therefore: chain_needed = sqrt((actual_distance / reductionFactor)² + depth²)
 
         float total_depth_from_bow = BOW_HEIGHT_M + current_depth;
 
@@ -435,8 +437,26 @@ void ChainController::calculateAndPublishHorizontalSlack() {
         if (current_distance <= 0.01) {
             minimum_chain_needed = total_depth_from_bow;
         } else {
-            // Straight-line distance from bow to anchor on seabed
-            minimum_chain_needed = sqrt(pow(current_distance, 2) + pow(total_depth_from_bow, 2));
+            // Use catenary-aware calculation to find required chain length
+            // Step 1: Estimate horizontal force (same as in computeTargetHorizontalDistance)
+            float horizontalForce = estimateHorizontalForce();
+
+            // Step 2: We need to find chain length that produces current_distance
+            // This requires iterative solving OR we can use an approximation.
+            // For simplicity, we'll use inverse catenary calculation:
+            // Start with straight-line chain needed for this distance
+            float straightLineChainForDistance = sqrt(pow(current_distance, 2) + pow(total_depth_from_bow, 2));
+
+            // Apply INVERSE reduction factor to account for catenary
+            // If reductionFactor reduces distance, we need MORE chain to reach same distance
+            // So we divide by the reduction factor (or multiply by 1/reductionFactor)
+            float reductionFactor = computeCatenaryReductionFactor(straightLineChainForDistance, total_depth_from_bow, horizontalForce);
+
+            // The actual chain needed is more than straight-line due to sag
+            // We need chain such that: current_distance = sqrt(chain² - depth²) * reductionFactor
+            // Solving: chain = sqrt((current_distance / reductionFactor)² + depth²)
+            float adjustedDistance = current_distance / fmax(0.01, reductionFactor); // Prevent divide by zero
+            minimum_chain_needed = sqrt(pow(adjustedDistance, 2) + pow(total_depth_from_bow, 2));
         }
 
         // Slack is excess chain beyond what's needed

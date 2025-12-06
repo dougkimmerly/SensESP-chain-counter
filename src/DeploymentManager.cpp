@@ -40,19 +40,42 @@ void DeploymentManager::start(float scopeRatio) {
   float tideAdjustedDepth = chainController->getTideAdjustedDepth();
   float currentDistance = chainController->getDistanceListener()->get();
 
-  // Use tide-adjusted depth for deployment calculations
-  // This ensures adequate chain for high tide conditions
-  targetDropDepth = tideAdjustedDepth + 4.0; // initial slack
-  anchorDepth = targetDropDepth - 2.0;       // anchor depth
-  totalChainLength = scopeRatio_ * (targetDropDepth - 2);
+  // Calculate total chain needed based on scope ratio
+  // Use tide-adjusted depth for deployment calculations to ensure adequate chain for high tide
+  anchorDepth = tideAdjustedDepth + 2.0;  // Add 2m for bow height
+  totalChainLength = scopeRatio_ * tideAdjustedDepth;
   chain30 = 0.40 * totalChainLength;
   chain75 = 0.80 * totalChainLength;
 
-  // Calculate catenary-adjusted distances using ChainController's physics model
-  // ChainController now automatically accounts for catenary effects and wind force
-  targetDistanceInit = computeTargetHorizontalDistance(targetDropDepth, anchorDepth);
+  // Calculate catenary-adjusted distances for each stage
+  // These are the horizontal distances the boat should drift to
   targetDistance30 = computeTargetHorizontalDistance(chain30, anchorDepth);
   targetDistance75 = computeTargetHorizontalDistance(chain75, anchorDepth);
+
+  // IMPROVED: Calculate initial drop to ensure boat can drift to proper distance
+  // The initial drop should create enough slack for boat to drift to ~50% of scope
+  // For a 5:1 scope, we want boat to initially drift to about 2.5x depth
+  // With catenary sag, we need MORE chain than the straight-line distance
+  //
+  // Strategy: Deploy enough chain so that with ~2-3m of slack, the boat can
+  // drift to approximately half the final scope distance
+  float desiredInitialDistance = 0.5 * computeTargetHorizontalDistance(totalChainLength, anchorDepth);
+
+  // To find chain length needed for this distance with slack:
+  // We want: chain = distance_needed + slack_buffer
+  // Use iterative approach: start with straight-line estimate, adjust for catenary
+  float straightLineToDesiredDistance = sqrt(pow(desiredInitialDistance, 2) + pow(anchorDepth, 2));
+
+  // Add slack buffer (4-6 meters depending on depth)
+  float slackBuffer = fmin(6.0, fmax(4.0, tideAdjustedDepth * 0.3));
+  targetDropDepth = straightLineToDesiredDistance + slackBuffer;
+
+  // Ensure initial drop is at least depth + bow height + minimum slack
+  float minimumInitialDrop = anchorDepth + 3.0;
+  targetDropDepth = fmax(targetDropDepth, minimumInitialDrop);
+
+  // Calculate what distance this initial drop will produce
+  targetDistanceInit = computeTargetHorizontalDistance(targetDropDepth, anchorDepth);
 
   ESP_LOGI(__FILE__, "DeploymentManager: Target distances - Init: %.2f, 30%%: %.2f, 75%%: %.2f",
            targetDistanceInit, targetDistance30, targetDistance75);
@@ -232,7 +255,35 @@ void DeploymentManager::updateDeployment() {
       }
       break;
 
-    case WAIT_TIGHT:
+    case WAIT_TIGHT: {
+      // Monitor slack to prevent deadlock
+      float currentSlack = chainController->getHorizontalSlackObservable()->get();
+
+      // If slack goes negative or very low, we need more chain for boat to drift
+      // Negative slack means boat is farther than chain can reach
+      // The boat can't drift to target distance without more chain
+      if (currentSlack < 0.5) {
+        ESP_LOGW(__FILE__, "WAIT_TIGHT: Slack too low (%.2f m), deploying 2m more chain to allow drift", currentSlack);
+
+        // Deploy additional chain to create positive slack
+        // This allows the boat to continue drifting to target distance
+        float additionalChain = 2.0;
+        chainController->lowerAnchor(additionalChain);
+
+        // Update target drop depth to reflect the additional chain
+        targetDropDepth += additionalChain;
+
+        // Recalculate target distance with new chain length
+        targetDistanceInit = computeTargetHorizontalDistance(targetDropDepth, anchorDepth);
+
+        ESP_LOGI(__FILE__, "WAIT_TIGHT: Updated targetDropDepth to %.2f m, new targetDistanceInit: %.2f m",
+                 targetDropDepth, targetDistanceInit);
+
+        // Stay in WAIT_TIGHT, will check again on next update
+        break;
+      }
+
+      // Normal waiting for distance logic
       if (currentDistance != -999.0 && currentDistance >= targetDistanceInit) {
         ESP_LOGI(__FILE__, "WAIT_TIGHT: Distance target met (%.2f >= %.2f). Transitioning to HOLD_DROP.", currentDistance, targetDistanceInit);
         transitionTo(HOLD_DROP);
@@ -241,6 +292,7 @@ void DeploymentManager::updateDeployment() {
           ESP_LOGW(__FILE__, "WAIT_TIGHT: distanceListener has no value yet!");
       }
       break;
+    }
 
     case HOLD_DROP:
       if (millis() - stageStartTime >= 2000) { // hold for 2s

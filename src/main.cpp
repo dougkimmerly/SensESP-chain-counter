@@ -21,6 +21,7 @@
 using namespace sensesp;
 
 bool ignore_input = true;
+bool automation_active = false;  // Prevents button handlers from interfering with automation
 
 ChainController* chainController;
 DeploymentManager* deploymentManager = nullptr;
@@ -255,7 +256,7 @@ void setup() {
   /* React to UP action */
   auto* up_handler = new LambdaConsumer<int>( [up_delay, direction](int input) {
     ESP_LOGD(__FILE__, "Button UP Changed");
-    if(ignore_input) {
+    if(ignore_input || automation_active) {
       return;
     }
     if (buttonDelayPtr != nullptr) {
@@ -278,7 +279,7 @@ void setup() {
   /* React to DOWN action */
   auto* down_handler = new LambdaConsumer<int>( [down_delay, direction](int input) {
     ESP_LOGD(__FILE__, "Button DOWN Changed");
-    if(ignore_input) {
+    if(ignore_input || automation_active) {
       return;
     }
     if (buttonDelayPtr != nullptr) {
@@ -407,6 +408,7 @@ void setup() {
   // Set completion callback for autoDrop to reset anchor_command to idle
   deploymentManager->setCompletionCallback([anchor_command]() {
     anchor_command->set("idle");
+    automation_active = false;
     ESP_LOGI(__FILE__, "autoDrop completed, command set to idle");
   });
 
@@ -480,6 +482,7 @@ void setup() {
             raise_amount = number_str.toFloat();
         }
 
+        automation_active = true;
         ESP_LOGI(__FILE__, "Raising %.2f meters", raise_amount);
         anchor_command->set("raise");
         chainController->raiseAnchor(raise_amount);
@@ -489,6 +492,7 @@ void setup() {
             ESP_LOGI(__FILE__, "movement timeout reached, stopping chain %1u s", moveTime);
             chainController->stop();
             anchor_command->set("idle");
+            automation_active = false;
             commandDelayPtr = nullptr;
         });
     }
@@ -506,6 +510,7 @@ void setup() {
             lower_amount = number_str.toFloat();
         }
 
+        automation_active = true;
         ESP_LOGI(__FILE__, "Lowering %.2f meters", lower_amount);
         anchor_command->set("lower");
         chainController->lowerAnchor(lower_amount);
@@ -515,6 +520,7 @@ void setup() {
             ESP_LOGI(__FILE__, "movement timeout reached, stopping chain %1u s", moveTime);
             chainController->stop();
             anchor_command->set("idle");
+            automation_active = false;
             commandDelayPtr = nullptr;
         });
     }
@@ -530,12 +536,15 @@ void setup() {
           }
       }
 
+      automation_active = true;
       ESP_LOGI(__FILE__, "Starting autoDrop with scope ratio %.1f:1", scopeRatio);
       anchor_command->set("autoDrop");
       deploymentManager->start(scopeRatio);
     }
     if(input == "autoRetrieve") {
       ESP_LOGI(__FILE__, "AUTO-RETRIEVE command received");
+
+      automation_active = true;
 
       // Raise all chain to 2m completion threshold
       // ChainController will auto-pause/resume based on slack
@@ -546,13 +555,24 @@ void setup() {
         ESP_LOGI(__FILE__, "Auto-retrieve: raising %.2fm (from %.2fm to 2.0m)", amountToRaise, currentRode);
         chainController->raiseAnchor(amountToRaise);
         anchor_command->set("autoRetrieve");
+
+        unsigned long moveTime = chainController->getTimeout();
+        commandDelayPtr = event_loop()->onDelay(moveTime, [moveTime, anchor_command]() {
+          ESP_LOGI(__FILE__, "Auto-retrieve timeout, stopping");
+          chainController->stop();
+          anchor_command->set("idle");
+          automation_active = false;
+          commandDelayPtr = nullptr;
+        });
       } else {
         ESP_LOGI(__FILE__, "Auto-retrieve: already at or below 2m, nothing to raise");
         anchor_command->set("idle");
+        automation_active = false;
       }
     }
     if (input == "stop") {
         // Both managers already stopped at top of handler
+        automation_active = false;
         anchor_command->set("idle");
     }
     
