@@ -69,6 +69,13 @@ public:
     // Public catenary physics method for use by DeploymentManager
     float computeTargetHorizontalDistance(float chainLength, float depth);
 
+    // Slack monitoring constants
+    static constexpr float PAUSE_SLACK_M = 0.2;                      // Pause raising when slack drops below this
+    static constexpr float RESUME_SLACK_M = 1.0;                     // Resume raising when slack builds to this
+    static constexpr unsigned long SLACK_COOLDOWN_MS = 3000;         // 3s cooldown between pause/resume actions
+    static constexpr float BOW_HEIGHT_M = 2.0;                       // Height from bow roller to water surface
+    static constexpr float FINAL_PULL_THRESHOLD_M = 3.0;             // When rode < depth + bow + threshold, skip slack checks
+
 private:
     float min_length_;
     float max_length_;
@@ -89,6 +96,10 @@ private:
     float upSpeed_ = 1000.0;   // default 1 sec per meter
     float downSpeed_ = 1000.0; // default 1 sec per meter
     const float smoothing_factor_ = 0.2;
+
+    // Slack monitoring state
+    bool paused_for_slack_ = false;
+    unsigned long last_slack_action_time_ = 0;
 
     sensesp::SKValueListener<float>* depthListener_;
     sensesp::SKValueListener<float>* distanceListener_;

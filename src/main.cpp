@@ -17,7 +17,6 @@
 #include "sensesp/types/position.h"
 #include "ChainController.h"
 #include "DeploymentManager.h"
-#include "RetrievalManager.h"
 
 using namespace sensesp;
 
@@ -25,7 +24,6 @@ bool ignore_input = true;
 
 ChainController* chainController;
 DeploymentManager* deploymentManager = nullptr;
-RetrievalManager* retrievalManager = nullptr;
 
 /* Prepare application */
 void setup() {
@@ -387,10 +385,6 @@ void setup() {
     chainController
   );
 
-  retrievalManager = new RetrievalManager(
-    chainController
-  );
-
   auto slackChain = new SKOutputFloat(
     "navigation.anchor.chainSlack",
     "/slack/sk",
@@ -410,14 +404,10 @@ void setup() {
   anchor_command->connect_to(
   new SKOutputString("navigation.anchor.command", "/anchorCommand/sk") );
 
-  // Set completion callbacks for auto commands to reset anchor_command to idle
+  // Set completion callback for autoDrop to reset anchor_command to idle
   deploymentManager->setCompletionCallback([anchor_command]() {
     anchor_command->set("idle");
     ESP_LOGI(__FILE__, "autoDrop completed, command set to idle");
-  });
-  retrievalManager->setCompletionCallback([anchor_command]() {
-    anchor_command->set("idle");
-    ESP_LOGI(__FILE__, "autoRetrieve completed, command set to idle");
   });
 
   auto* sk_timer2 = new RepeatSensor<bool>(11000, [anchor_command] () -> bool {
@@ -537,20 +527,31 @@ void setup() {
       }
 
       ESP_LOGI(__FILE__, "Starting autoDrop with scope ratio %.1f:1", scopeRatio);
-      retrievalManager->stop();  // Stop retrieval if running
+      chainController->stop();  // Stop any active raising/lowering
       anchor_command->set("autoDrop");
       deploymentManager->start(scopeRatio);
     }
     if(input == "autoRetrieve") {
       ESP_LOGI(__FILE__, "AUTO-RETRIEVE command received");
-      deploymentManager->stop();  // Stop deployment if running (its monitoring interferes with retrieval)
-      anchor_command->set("autoRetrieve");
-      retrievalManager->start();
+      deploymentManager->stop();  // Stop deployment if running
+
+      // Raise all chain to 2m completion threshold
+      // ChainController will auto-pause/resume based on slack
+      float currentRode = chainController->getChainLength();
+      float amountToRaise = currentRode - 2.0;  // Raise to 2m (min_length)
+
+      if (amountToRaise > 0.1) {
+        ESP_LOGI(__FILE__, "Auto-retrieve: raising %.2fm (from %.2fm to 2.0m)", amountToRaise, currentRode);
+        chainController->raiseAnchor(amountToRaise);
+        anchor_command->set("autoRetrieve");
+      } else {
+        ESP_LOGI(__FILE__, "Auto-retrieve: already at or below 2m, nothing to raise");
+        anchor_command->set("idle");
+      }
     }
     if (input == "stop") {
         chainController->stop();
         deploymentManager->stop();
-        retrievalManager->stop();
         anchor_command->set("idle");
         commandDelayPtr = nullptr;
     }

@@ -132,6 +132,10 @@ void ChainController::raiseAnchor(float amount) {
     updateTimeout(amount, upSpeed_); // Use the requested 'amount' for timeout calculation
     state_ = ChainState::RAISING;
 
+    // Reset slack monitoring state for new raise
+    paused_for_slack_ = false;
+    last_slack_action_time_ = 0;
+
     // Activate relay immediately
     digitalWrite(upRelayPin_, HIGH);
     digitalWrite(downRelayPin_, LOW);
@@ -159,18 +163,64 @@ void ChainController::control(float current_pos) {
             }
             break;
 
-        case ChainState::RAISING:
-            // Check if current position has reached or fallen below the target.
-            // Also checking against min_length_ ensures a stop if that limit is hit.
+        case ChainState::RAISING: {
+            // Check if target reached first (highest priority)
             if (current_pos <= target_ || current_pos <= min_length_) {
                 digitalWrite(upRelayPin_, LOW);
                 calcSpeed(movement_start_time_, start_position_);
                 state_ = ChainState::IDLE;
-                ESP_LOGD(__FILE__, "control: target reached (raising), stopping at %.2f m.", current_pos);
-            } else {
-                digitalWrite(upRelayPin_, HIGH); // Keep relay HIGH if still raising
+                paused_for_slack_ = false;  // Reset slack state
+                ESP_LOGI(__FILE__, "control: RAISING STOPPED - current_pos=%.2f, target=%.2f, min_length=%.2f, reason=%s",
+                         current_pos, target_, min_length_,
+                         (current_pos <= target_) ? "target reached" : "min_length reached");
+                break;
+            }
+
+            // Check if we're in final pull phase (chain nearly vertical)
+            float depth = getCurrentDepth();
+            bool inFinalPull = (current_pos <= depth + BOW_HEIGHT_M + FINAL_PULL_THRESHOLD_M);
+
+            // Skip slack monitoring in final pull - chain is nearly vertical, catenary model breaks down
+            if (inFinalPull) {
+                // Just keep raising until target reached
+                if (!paused_for_slack_) {
+                    digitalWrite(upRelayPin_, HIGH);
+                }
+                break;
+            }
+
+            // Normal raising - monitor slack and pause/resume as needed
+            float current_slack = horizontalSlack_->get();
+            unsigned long now = millis();
+
+            // Check if we should pause due to low slack
+            if (!paused_for_slack_ && current_slack < PAUSE_SLACK_M) {
+                unsigned long time_since_last_action = now - last_slack_action_time_;
+                if (time_since_last_action >= SLACK_COOLDOWN_MS || last_slack_action_time_ == 0) {
+                    // Pause the raise - chain getting too tight
+                    digitalWrite(upRelayPin_, LOW);
+                    paused_for_slack_ = true;
+                    last_slack_action_time_ = now;
+                    ESP_LOGI(__FILE__, "Pausing raise - slack low (%.2fm < %.2fm)", current_slack, PAUSE_SLACK_M);
+                }
+            }
+            // Check if we should resume from pause
+            else if (paused_for_slack_ && current_slack >= RESUME_SLACK_M) {
+                unsigned long time_since_last_action = now - last_slack_action_time_;
+                if (time_since_last_action >= SLACK_COOLDOWN_MS) {
+                    // Resume the raise - enough slack available
+                    digitalWrite(upRelayPin_, HIGH);
+                    paused_for_slack_ = false;
+                    last_slack_action_time_ = now;
+                    ESP_LOGI(__FILE__, "Resuming raise - slack available (%.2fm >= %.2fm)", current_slack, RESUME_SLACK_M);
+                }
+            }
+            // Otherwise maintain current state (raising or paused)
+            else if (!paused_for_slack_) {
+                digitalWrite(upRelayPin_, HIGH); // Keep raising
             }
             break;
+        }
     }
 }
 
@@ -183,6 +233,11 @@ void ChainController::stop() {
     digitalWrite(downRelayPin_, LOW);
     calcSpeed(movement_start_time_, start_position_); // Calculate speed for the movement that was stopped
     state_ = ChainState::IDLE;
+
+    // Reset slack monitoring state
+    paused_for_slack_ = false;
+    last_slack_action_time_ = 0;
+
     ESP_LOGD(__FILE__, "stop: all relays off, state IDLE.");
 }
 

@@ -1,17 +1,55 @@
-# SensESP Framework Quick Reference for AI Assistants
+# SensESP Quick Reference for AI Assistants
 
-**Purpose**: Help AI assistants quickly understand SensESP patterns without reading the full documentation.
+**Purpose**: Help AI assistants quickly understand SensESP concepts for marine sensor development.
+
+---
+
+## Tools Available
+
+### SignalK MCP Server
+
+You have access to the SignalK MCP server which provides real-time data from the Signal K server. Use these tools to:
+
+- **Check existing paths**: See what data is already available before creating new sensors
+- **Verify sensor output**: Confirm your SensESP device is publishing correctly
+- **Debug integration**: Check if values are reaching the server
+
+**Available MCP tools:**
+- `mcp__signalk__get_navigation_data` - Get position, heading, speed
+- `mcp__signalk__get_signalk_overview` - Get server info and available paths
+- `mcp__signalk__get_ais_targets` - Get nearby vessels
+- `mcp__signalk__get_system_alarms` - Get active alarms
+
+**When to use:**
+- Before implementing a sensor: Check if the path already exists
+- After deploying: Verify the sensor is publishing to the correct path
+- When debugging: See what values are actually reaching the server
+
+### Research Command
+
+When you need to research SensESP or Signal K topics that aren't covered in this guide, use the `/sensesp-research` command to spawn a background research agent:
+
+```
+/sensesp-research how do I subscribe to a Signal K path and react to changes?
+```
+
+This spawns an independent agent that will:
+- Search local docs and source code
+- Search SensESP library in `.pio/libdeps/`
+- Fetch online documentation if needed
+- Return detailed findings without consuming your session context
+
+Use this for any non-trivial SensESP questions before attempting implementation.
 
 ---
 
 ## What is SensESP?
 
-SensESP is a Signal K sensor framework for ESP32 microcontrollers. It provides:
-- WiFi connectivity with auto-configuration
-- Signal K protocol integration (publish/subscribe)
-- Reactive event loop (ReactESP)
-- Web UI for runtime configuration
-- Sensor → Transform → Output data pipeline
+SensESP is an ESP32/ESP8266 framework for building Signal K sensors:
+- Arduino-based development using PlatformIO
+- Connects sensors directly to Signal K server via WiFi
+- Built-in web UI for configuration
+- Supports a wide variety of sensors (temperature, tank levels, engine data, etc.)
 
 ---
 
@@ -19,294 +57,305 @@ SensESP is a Signal K sensor framework for ESP32 microcontrollers. It provides:
 
 | Resource | URL | Use For |
 |----------|-----|---------|
-| **Official Docs** | https://signalk.org/SensESP/ | Tutorials, concepts, getting started |
-| **API Reference** | https://signalk.org/SensESP/generated/docs/ | Class definitions, method signatures |
-| **GitHub Repo** | https://github.com/SignalK/SensESP | Source code, examples, issues |
-| **Examples** | https://github.com/SignalK/SensESP/tree/main/examples | Working code patterns |
-| **Signal K Spec** | https://signalk.org/specification/1.7.0/doc/ | Path naming, units, data model |
-| **ReactESP** | https://github.com/mairas/ReactESP | Event loop documentation |
-
----
-
-## Core Concepts
-
-### 1. Data Flow Pipeline
-
-```
-Sensor → Transform(s) → SKOutput → Signal K Server
-                                         ↓
-SKValueListener ← Signal K Server (incoming data)
-```
-
-### 2. The ReactESP Event Loop
-
-SensESP uses ReactESP for non-blocking async operations. **Never use `delay()`** in the main loop.
-
-```cpp
-// Access the event loop
-#include "sensesp.h"
-
-// Periodic task (every 1000ms)
-sensesp::event_loop()->onRepeat(1000, []() {
-    // Your code here
-});
-
-// One-time delayed task
-sensesp::event_loop()->onDelay(5000, []() {
-    // Runs once after 5 seconds
-});
-
-// Main loop must call tick()
-void loop() {
-    sensesp::event_loop()->tick();
-}
-```
-
-### 3. Configuration Paths
-
-Paths starting with `/` are persisted and appear in the web UI:
-```cpp
-new SKOutputFloat("navigation.anchor.rodeDeployed", "/anchor/rode/sk");
-//                 ↑ Signal K path                   ↑ Config path (stored)
-```
-
----
-
-## Common Patterns
-
-### Publishing to Signal K (SKOutput)
-
-Use SKOutput variants to send data to Signal K:
-
-```cpp
-#include "sensesp/signalk/signalk_output.h"
-
-// Float values
-new SKOutputFloat("path.to.value", "/config/path");
-
-// String values
-new SKOutputString("path.to.string", "/config/path");
-
-// Boolean values
-new SKOutputBool("path.to.bool", "/config/path");
-
-// Integer values
-new SKOutputInt("path.to.int", "/config/path");
-```
-
-**With metadata (units, description):**
-```cpp
-auto metadata = new SKMetadata("K", "Engine temperature");  // units, description
-new SKOutputFloat("propulsion.engine.temperature", "/engine/temp/sk", metadata);
-```
-
-### Listening to Signal K (SKValueListener)
-
-Use SKValueListener to receive data from Signal K:
-
-```cpp
-#include "sensesp/signalk/signalk_value_listener.h"
-
-// Listen to a float value (2000ms timeout, config path)
-auto* depthListener = new sensesp::SKValueListener<float>(
-    "environment.depth.belowSurface",  // Signal K path to listen to
-    2000,                               // Timeout in ms
-    "/depth/sk"                         // Config path
-);
-
-// Get the current value
-float depth = depthListener->get();
-```
-
-### Observable Values (Internal State)
-
-Use ObservableValue to create reactive state that can be connected to outputs:
-
-```cpp
-#include "sensesp/system/observable.h"
-
-// Create an observable
-auto* myValue = new sensesp::ObservableValue<float>(0.0);
-
-// Update it (triggers connected outputs)
-myValue->set(42.5);
-
-// Connect to Signal K output
-myValue->connect_to(new SKOutputFloat("my.signal.path", "/my/config"));
-
-// Get current value
-float current = myValue->get();
-```
-
-### Transform Chains
-
-Connect sensors through transforms to outputs:
-
-```cpp
-// Basic chain: sensor → transform → output
-auto* sensor = new AnalogInput(36, 1000, "/sensor/config");
-sensor->connect_to(new Linear(1.0, 0.0, "/calibration"))
-      ->connect_to(new SKOutputFloat("my.sensor.path", "/output/config"));
-
-// Lambda transform for custom logic
-auto* transform = new LambdaTransform<float, bool>([](float input) -> bool {
-    return input > 100.0;
-});
-```
-
----
-
-## Signal K Path Conventions
-
-### Common Path Prefixes
-
-| Prefix | Use For |
-|--------|---------|
-| `navigation.*` | Position, speed, course, anchor |
-| `environment.*` | Depth, wind, temperature, tide |
-| `electrical.*` | Batteries, alternators, solar |
-| `propulsion.*` | Engine data |
-| `tanks.*` | Fuel, water, waste levels |
-
-### Units (Always SI)
-
-| Measurement | Unit |
-|-------------|------|
-| Temperature | Kelvin (K) |
-| Distance | Meters (m) |
-| Speed | m/s |
-| Pressure | Pascals (Pa) |
-| Voltage | Volts (V) |
-| Frequency | Hertz (Hz) |
+| **Main Docs** | https://signalk.org/SensESP/ | Getting started |
+| **GitHub** | https://github.com/SignalK/SensESP | Source code, examples |
+| **Class Reference** | https://signalk.org/SensESP/docs/generated/docs/index.html | API reference |
+| **Examples** | https://github.com/SignalK/SensESP/tree/main/examples | Code examples |
 
 ---
 
 ## Project Structure
 
-Typical SensESP project:
 ```
-project/
-├── platformio.ini          # PlatformIO config
+my-sensesp-project/
+├── platformio.ini          # PlatformIO configuration
 ├── src/
-│   └── main.cpp           # Entry point, setup sensors
-└── include/               # Custom headers
+│   └── main.cpp            # Main application code
+├── data/                   # SPIFFS files (web UI, config)
+└── include/                # Header files (optional)
 ```
 
-### platformio.ini essentials
+---
+
+## platformio.ini Template
 
 ```ini
-[env:esp32dev]
+[env:esp32]
 platform = espressif32
 board = esp32dev
 framework = arduino
 lib_deps =
     SignalK/SensESP @ ^3.0.0
 monitor_speed = 115200
+upload_speed = 921600
+
+; For mDNS/WiFi config
+board_build.partitions = min_spiffs.csv
 ```
 
 ---
 
-## Application Builder Pattern
+## Basic Application Structure
 
 ```cpp
+#include <Arduino.h>
 #include "sensesp_app_builder.h"
+#include "sensesp/sensors/analog_input.h"
+#include "sensesp/transforms/linear.h"
+
+using namespace sensesp;
+
+SensESPApp* sensesp_app;
 
 void setup() {
-    SensESPAppBuilder builder;
+  // Create the SensESP application
+  SensESPAppBuilder builder;
+  sensesp_app = builder
+    .set_hostname("my-sensor")
+    .set_sk_server("192.168.1.100", 3000)
+    .get_app();
 
-    sensesp_app = builder
-        .set_hostname("my-device")
-        .set_wifi("SSID", "password")           // Optional: hard-code WiFi
-        .set_sk_server("192.168.1.5", 3000)     // Optional: hard-code server
-        .get_app();
+  // Define sensor pipeline
+  auto* analog_input = new AnalogInput(36, 1000);  // GPIO36, 1s interval
 
-    // Add your sensors and outputs here...
+  analog_input
+    ->connect_to(new Linear(1.0, 0.0, "/transforms/calibration"))
+    ->connect_to(new SKOutputFloat("environment.outside.temperature"));
+
+  sensesp_app->start();
 }
 
 void loop() {
-    sensesp::event_loop()->tick();
+  sensesp_app->tick();
 }
 ```
 
 ---
 
-## Debugging Tips
+## Core Concepts
 
-### Check Signal K Connection
-- Device creates AP "Configure SensESP" (password: "thisisfine") on first boot
-- Access web UI at 192.168.4.1 when connected to device AP
-- Check Serial monitor at 115200 baud for connection status
+### 1. Producers
+Generate data from sensors:
 
-### Common Issues
-
-| Problem | Solution |
-|---------|----------|
-| Won't connect to SK server | Disable SSL on Signal K server |
-| Values not appearing | Check Signal K path format (dots not slashes) |
-| Config not saving | Ensure config path starts with `/` |
-| Event loop blocking | Remove any `delay()` calls |
-
----
-
-## Migration Notes (v2 → v3)
-
-Key changes in SensESP 3.x:
-- ReactESP is no longer a singleton - use `sensesp::event_loop()`
-- `ReactESP::app` removed - use `event_loop()`
-- ReactESP class renamed to `reactesp::EventLoop`
-- WSClient renamed to SKWSClient
-
----
-
-## Quick Examples from This Project
-
-### Publishing a String to Signal K
 ```cpp
-// From DeploymentManager - publishing stage name
-autoStageObservable_ = new sensesp::ObservableValue<String>("Idle");
-autoStageObservable_->connect_to(
-    new sensesp::SKOutputString("navigation.anchor.autoStage", "/anchor/autoStage")
-);
+// Analog input (ADC)
+new AnalogInput(gpio_pin, read_interval_ms)
 
-// Update the value (publishes automatically)
-autoStageObservable_->set("Deploy 40");
+// Digital input
+new DigitalInputState(gpio_pin, INPUT_PULLUP, read_interval_ms)
+
+// 1-Wire temperature (DS18B20)
+new DallasTemperatureSensors(one_wire_pin)
+
+// I2C sensors
+new BME280(i2c_addr)  // Temperature, humidity, pressure
 ```
 
-### Listening to Multiple Signal K Values
-```cpp
-// From ChainController - listening to depth, distance, wind, tide
-depthListener_ = new sensesp::SKValueListener<float>("environment.depth.belowSurface", 2000, "/depth/sk");
-distanceListener_ = new sensesp::SKValueListener<float>("navigation.anchor.distanceFromBow", 2000, "/distance/sk");
-windSpeedListener_ = new sensesp::SKValueListener<float>("environment.wind.speedTrue", 2000, "/wind/sk");
-tideHeightNowListener_ = new sensesp::SKValueListener<float>("environment.tide.heightNow", 2000, "/tide/heightNow/sk");
+### 2. Transforms
+Process and convert data:
 
-// Get values
-float depth = depthListener_->get();
-float wind = windSpeedListener_->get();
+```cpp
+// Linear scaling: output = input * multiplier + offset
+new Linear(multiplier, offset, config_path)
+
+// Moving average
+new MovingAverage(samples, config_path)
+
+// Median filter
+new Median(samples, config_path)
+
+// Voltage divider (for battery monitoring)
+new VoltageDividerR2(R1_ohms, R2_ohms, config_path)
+
+// Change filter (only output when value changes)
+new ChangeFilter(min_delta, max_delta, max_skips, config_path)
+
+// Lambda (custom transform)
+new LambdaTransform<float, float>([](float input) {
+  return input * 2.0;
+}, config_path)
 ```
 
-### Scheduled Repeating Task
-```cpp
-// From DeploymentManager - update loop every 1ms
-updateEvent = sensesp::event_loop()->onRepeat(1, std::bind(&DeploymentManager::updateDeployment, this));
+### 3. Consumers
+Output data to Signal K or other destinations:
 
-// Clean up when done
-if (updateEvent != nullptr) {
-    sensesp::event_loop()->remove(updateEvent);
-    updateEvent = nullptr;
-}
+```cpp
+// Signal K output
+new SKOutputFloat("path.to.value", config_path)
+new SKOutputInt("path.to.value", config_path)
+new SKOutputBool("path.to.value", config_path)
+new SKOutputString("path.to.value", config_path)
+
+// Position output (lat/lon)
+new SKOutputPosition("navigation.position", config_path)
 ```
 
 ---
 
-## Where to Look for More
+## Common Sensor Patterns
 
-1. **Concepts & Architecture**: https://signalk.org/SensESP/pages/concepts/
-2. **Tutorials**: https://signalk.org/SensESP/pages/tutorials/
-3. **Lambda Transforms**: https://signalk.org/SensESP/pages/tutorials/lambda_transform/
-4. **Arduino Integration**: https://signalk.org/SensESP/pages/tutorials/arduino_style/
-5. **Signal K Paths Reference**: https://signalk.org/specification/1.7.0/doc/vesselsBranch.html
+### Temperature Sensor (DS18B20)
+
+```cpp
+#include "sensesp/sensors/onewire_temperature.h"
+
+auto* dallas = new DallasTemperatureSensors(ONE_WIRE_PIN);
+auto* engine_temp = new OneWireTemperature(dallas, "/sensors/engine_temp");
+
+engine_temp
+  ->connect_to(new Linear(1.0, 273.15, "/transforms/to_kelvin"))  // C to K
+  ->connect_to(new SKOutputFloat("propulsion.main.temperature"));
+```
+
+### Tank Level (Analog)
+
+```cpp
+auto* tank_input = new AnalogInput(TANK_PIN, 5000);
+
+tank_input
+  ->connect_to(new Linear(1.0/4095.0, 0.0, "/transforms/normalize"))  // 0-1
+  ->connect_to(new MovingAverage(10, "/transforms/smooth"))
+  ->connect_to(new SKOutputFloat("tanks.fuel.main.currentLevel"));
+```
+
+### Battery Voltage
+
+```cpp
+auto* voltage_input = new AnalogInput(BATT_PIN, 1000);
+
+voltage_input
+  ->connect_to(new VoltageDividerR2(100000, 27000, "/transforms/divider"))
+  ->connect_to(new SKOutputFloat("electrical.batteries.house.voltage"));
+```
+
+### RPM from Pulse Counter
+
+```cpp
+#include "sensesp/sensors/digital_input.h"
+
+auto* rpm_input = new DigitalInputCounter(RPM_PIN, INPUT_PULLUP, RISING, 1000);
+
+rpm_input
+  ->connect_to(new Frequency(1.0, "/transforms/to_hz"))  // pulses/sec
+  ->connect_to(new SKOutputFloat("propulsion.main.revolutions"));
+```
 
 ---
 
-Last Updated: 2025-12-02
+## WiFi Configuration
+
+On first boot:
+1. ESP creates AP: "Configure <hostname>"
+2. Connect to AP, open 192.168.4.1
+3. Enter WiFi credentials and Signal K server address
+4. ESP reboots and connects
+
+Or set in code:
+```cpp
+builder
+  .set_wifi("SSID", "password")
+  .set_sk_server("192.168.1.100", 3000)
+```
+
+---
+
+## Configuration Paths
+
+Every configurable component has a path like:
+- `/sensors/engine_temp`
+- `/transforms/calibration`
+- `/sk/engine_temp`
+
+Access config UI at: `http://<hostname>.local/`
+
+---
+
+## Signal K Path Conventions
+
+Use standard Signal K paths:
+
+| Measurement | Signal K Path |
+|-------------|---------------|
+| Engine temp | `propulsion.{id}.temperature` |
+| Oil pressure | `propulsion.{id}.oilPressure` |
+| Coolant temp | `propulsion.{id}.coolantTemperature` |
+| RPM | `propulsion.{id}.revolutions` |
+| Battery voltage | `electrical.batteries.{id}.voltage` |
+| Tank level | `tanks.{type}.{id}.currentLevel` |
+| Bilge state | `notifications.bilge.{id}` |
+
+---
+
+## Debugging
+
+```cpp
+// Enable debug output
+#define DEBUG_ESP_PORT Serial
+
+// In code
+debugD("Debug message: %f", value);
+debugI("Info message");
+debugW("Warning message");
+debugE("Error message");
+```
+
+Monitor: `pio run -t monitor`
+
+---
+
+## Common Issues
+
+### WiFi Won't Connect
+- Check credentials
+- Ensure 2.4GHz network (ESP doesn't support 5GHz)
+- Try static IP
+
+### Signal K Connection Failed
+- Verify server IP and port
+- Check authentication settings
+- Ensure mDNS works or use IP address
+
+### Sensor Not Reading
+- Check wiring and GPIO pin
+- Verify pull-up/pull-down resistors
+- Check power supply (some sensors need 5V)
+
+---
+
+## Useful Libraries
+
+```ini
+lib_deps =
+    SignalK/SensESP @ ^3.0.0
+    paulstoffregen/OneWire
+    milesburton/DallasTemperature
+    adafruit/Adafruit BME280 Library
+```
+
+---
+
+## ESP32 GPIO Reference
+
+| GPIO | Notes |
+|------|-------|
+| 36, 39, 34, 35 | Input only, no pull-up |
+| 32, 33 | ADC + touch |
+| 25, 26, 27 | ADC + DAC |
+| 21, 22 | Default I2C (SDA, SCL) |
+| 16, 17 | Default UART2 |
+| 4 | Default 1-Wire |
+
+Avoid: GPIO 0, 2, 15 (boot pins), GPIO 6-11 (flash)
+
+---
+
+## Quick Reference Links
+
+- **Getting Started**: https://signalk.org/SensESP/pages/getting_started/
+- **API Reference**: https://signalk.org/SensESP/docs/generated/docs/
+- **Examples**: https://github.com/SignalK/SensESP/tree/main/examples
+- **Signal K Paths**: https://signalk.org/specification/latest/
+
+---
+
+Last Updated: 2025-12-04

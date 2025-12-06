@@ -3,7 +3,12 @@
     "allow": [
       "Bash(~/.platformio/penv/bin/platformio run:*)",
       "Bash(tree:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(chmod:*)",
+      "Bash(git push)",
+      "Bash(~/src/claude-config/install.sh:*)",
+      "Bash(env)"
     ],
     "deny": [],
     "ask": []

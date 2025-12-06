@@ -4,6 +4,45 @@
 
 ---
 
+## Tools Available
+
+### SignalK MCP Server
+
+You have access to the SignalK MCP server which provides real-time data from the Signal K server. Use these tools to:
+
+- **Check current state**: See live values when debugging
+- **Verify plugin output**: Confirm your plugin is publishing correctly
+- **Test subscriptions**: See what data is available before subscribing
+
+**Available MCP tools:**
+- `mcp__signalk__get_navigation_data` - Get position, heading, speed
+- `mcp__signalk__get_signalk_overview` - Get server info and available paths
+- `mcp__signalk__get_ais_targets` - Get nearby vessels
+- `mcp__signalk__get_system_alarms` - Get active alarms
+
+**When to use:**
+- When debugging: Check if values are being published correctly
+- Before subscribing: See what paths/data are available
+- During development: Verify your plugin's output in real-time
+
+### Research Command
+
+When you need to research Signal K plugin development topics that aren't covered in this guide, use the `/signalk-research` command to spawn a background research agent:
+
+```
+/signalk-research how do I register a PUT handler for custom commands?
+```
+
+This spawns an independent agent that will:
+- Search local docs and source code
+- Search project plugin code for patterns
+- Fetch online documentation if needed
+- Return detailed findings without consuming your session context
+
+Use this for any non-trivial Signal K questions before attempting implementation.
+
+---
+
 ## What is Signal K?
 
 Signal K is an open marine data standard that provides:
@@ -242,6 +281,177 @@ PUT /signalk/v1/api/vessels/self/electrical/switches/anchorLight/state
 Content-Type: application/json
 
 {"value": 1}
+```
+
+---
+
+## Plugin PUT Handlers (Command Endpoints)
+
+Signal K plugins can register PUT handlers to receive commands via standard Signal K paths. This pattern is commonly used with the SKipper app to control vessel systems.
+
+### How It Works
+
+1. Plugin registers a handler for a Signal K path using `app.registerPutHandler()`
+2. Client (e.g., SKipper app) sends a PUT request to that path with a command value
+3. Plugin receives the request and can execute any logic (start/stop motor, deploy anchor, etc.)
+4. Plugin responds with status and message
+
+### Example: Anchor Control Handler
+
+```javascript
+// Register a PUT handler for anchor commands
+app.registerPutHandler('navigation.anchor.setAnchor', (context, path, value, callback) => {
+  // Validate required fields
+  if (!value || !value.latitude || !value.longitude || value.rodeDeployed === undefined) {
+    return callback({
+      state: 'COMPLETED',
+      statusCode: 400,
+      message: 'Missing required fields: latitude, longitude, rodeDeployed'
+    });
+  }
+
+  try {
+    // Store the anchor position and rope deployed length
+    anchorPosition = {
+      latitude: value.latitude,
+      longitude: value.longitude,
+      altitude: value.altitude || 0
+    };
+    rodeDeployed = value.rodeDeployed;
+
+    // Perform any necessary logic (validation, API calls, etc.)
+    validateAnchorPosition(anchorPosition);
+
+    return callback({
+      state: 'COMPLETED',
+      statusCode: 200,
+      message: `Anchor set at (${value.latitude.toFixed(4)}, ${value.longitude.toFixed(4)}), rode ${value.rodeDeployed}m`
+    });
+  } catch (error) {
+    return callback({
+      state: 'COMPLETED',
+      statusCode: 500,
+      message: `Error: ${error.message}`
+    });
+  }
+});
+```
+
+### Calling the Handler via REST API
+
+```bash
+curl -X PUT http://localhost:80/signalk/v1/api/vessels/self/navigation/anchor/setAnchor \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{
+    "value": {
+      "latitude": 43.6539,
+      "longitude": 7.0234,
+      "rodeDeployed": 45.5
+    }
+  }'
+```
+
+Response:
+```json
+{
+  "state": "COMPLETED",
+  "statusCode": 200,
+  "message": "Anchor set at (43.6539, 7.0234), rode 45.5m"
+}
+```
+
+### SKipper App Integration
+
+SKipper displays Signal K paths and can send PUT commands to any registered PUT handler. To make a handler available in SKipper:
+
+1. **Register the PUT handler** in your plugin (as shown above)
+2. **Use a standard or custom Signal K path** (e.g., `navigation.anchor.setAnchor`)
+3. **SKipper will automatically discover** the handler via the `/signalk/v1/api` endpoint
+4. **Users can trigger the command** from SKipper's UI
+
+### Best Practices
+
+#### 1. Use Standard Paths When Possible
+
+Prefer standard Signal K paths (`navigation.anchor.distanceFromBow`, `electrical.switches.anchorLight.state`) over custom paths to maintain compatibility.
+
+#### 2. Make Handlers Idempotent
+
+If the same command is sent twice, it should be safe:
+
+```javascript
+// ✓ Good: Setting anchor position twice produces same result
+setAnchor(pos) → stored in database
+
+// ✗ Bad: Incrementing counter twice produces different result
+incrementCounter() → 1 becomes 2 becomes 3
+```
+
+#### 3. Validate Input
+
+Always validate required fields and types:
+
+```javascript
+if (!value.latitude || isNaN(value.latitude)) {
+  return callback({
+    state: 'COMPLETED',
+    statusCode: 400,
+    message: 'Invalid latitude'
+  });
+}
+```
+
+#### 4. Return Appropriate Status Codes
+
+- `200` - Success
+- `400` - Invalid input
+- `500` - Server error
+- `503` - Service unavailable
+
+#### 5. Keep Responses Lightweight
+
+Use concise messages that fit on mobile displays:
+
+```javascript
+// ✓ Good
+message: "Anchor set, rode 45m"
+
+// ✗ Bad
+message: "The anchor position has been successfully configured with a rope length of 45 meters deployed on the seafloor"
+```
+
+### Common Patterns
+
+#### Motor Control
+```javascript
+app.registerPutHandler('electrical.motors.main.control', (context, path, value, callback) => {
+  if (value === 'start') {
+    startMotor();
+  } else if (value === 'stop') {
+    stopMotor();
+  }
+  callback({ state: 'COMPLETED', statusCode: 200, message: `Motor ${value}` });
+});
+```
+
+#### Light Switch
+```javascript
+app.registerPutHandler('electrical.switches.anchorLight.state', (context, path, value, callback) => {
+  setLightState(value === 1);
+  callback({ state: 'COMPLETED', statusCode: 200, message: value === 1 ? 'On' : 'Off' });
+});
+```
+
+#### Configuration Setting
+```javascript
+app.registerPutHandler('plugins.myapp.config.threshold', (context, path, value, callback) => {
+  if (value < 0 || value > 100) {
+    return callback({ state: 'COMPLETED', statusCode: 400, message: 'Must be 0-100' });
+  }
+  config.threshold = value;
+  callback({ state: 'COMPLETED', statusCode: 200, message: `Threshold set to ${value}` });
+});
 ```
 
 ---
