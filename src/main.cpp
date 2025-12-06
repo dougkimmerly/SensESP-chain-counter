@@ -444,6 +444,13 @@ void setup() {
 
       ESP_LOGI(__FILE__, "Command received is %s", input.c_str());
 
+      // Handle test notifications (don't stop windlass for these)
+      if (input.startsWith("testNotification")) {
+        ESP_LOGI(__FILE__, "TEST NOTIFICATION RECEIVED");
+        anchor_command->set("testNotification");
+        return; // Don't process further, just acknowledge
+      }
+
       // Stop any active operations before processing new command
       if (chainController->isActive()) {
           chainController->stop();
