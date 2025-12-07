@@ -38,12 +38,12 @@ private:
     DROP,
     WAIT_TIGHT,
     HOLD_DROP,
-    DEPLOY_30,
-    WAIT_30,
-    HOLD_30,
-    DEPLOY_75,
-    WAIT_75,
-    HOLD_75,
+    DEPLOY_FIRST,
+    WAIT_FIRST,
+    HOLD_FIRST,
+    DEPLOY_SECOND,
+    WAIT_SECOND,
+    HOLD_SECOND,
     DEPLOY_100,
     COMPLETE
   };

@@ -162,7 +162,7 @@ void DeploymentManager::startContinuousDeployment(float stageTargetChainLength) 
 
 void DeploymentManager::monitorDeployment(float stageTargetChainLength) {
     // Check if still in deployment stage
-    if (!isRunning || (currentStage != DEPLOY_30 && currentStage != DEPLOY_75 && currentStage != DEPLOY_100)) {
+    if (!isRunning || (currentStage != DEPLOY_FIRST && currentStage != DEPLOY_SECOND && currentStage != DEPLOY_100)) {
         if (deployPulseEvent != nullptr) {
             sensesp::event_loop()->remove(deployPulseEvent);
             deployPulseEvent = nullptr;
@@ -289,16 +289,16 @@ void DeploymentManager::updateDeployment() {
 
     case HOLD_DROP:
       if (millis() - stageStartTime >= 2000) { // hold for 2s
-        ESP_LOGD(__FILE__, "HOLD_DROP: Hold time complete. Transitioning to DEPLOY_30.");
-        transitionTo(DEPLOY_30);
+        ESP_LOGD(__FILE__, "HOLD_DROP: Hold time complete. Transitioning to DEPLOY_FIRST.");
+        transitionTo(DEPLOY_FIRST);
         currentStageTargetLength = 0.0;
       }
       break;
 
-     case DEPLOY_30:
+     case DEPLOY_FIRST:
       // Check if we've reached the stage's target
       if (currentChainLength >= chain30) {
-        ESP_LOGI(__FILE__, "DEPLOY_30: Target %.2f m reached. Transitioning to WAIT_30.", chain30);
+        ESP_LOGI(__FILE__, "DEPLOY_FIRST: Target %.2f m reached. Transitioning to WAIT_FIRST.", chain30);
         if (deployPulseEvent != nullptr) {
             sensesp::event_loop()->remove(deployPulseEvent);
             deployPulseEvent = nullptr;
@@ -306,39 +306,39 @@ void DeploymentManager::updateDeployment() {
         if (chainController->isActive()) {
             chainController->stop();
         }
-        transitionTo(WAIT_30);
+        transitionTo(WAIT_FIRST);
         stageStartTime = millis();
         break;
       }
 
       // Start continuous deployment if not already started
       if (deployPulseEvent == nullptr) {
-        ESP_LOGI(__FILE__, "DEPLOY_30: Starting continuous deployment to %.2fm", chain30);
+        ESP_LOGI(__FILE__, "DEPLOY_FIRST: Starting continuous deployment to %.2fm", chain30);
         startContinuousDeployment(chain30);
       }
       break;
 
-    case WAIT_30:
+    case WAIT_FIRST:
       if (currentDistance != -999.0 && currentDistance >= targetDistance30) {
-        ESP_LOGI(__FILE__, "WAIT_30: Distance target met (%.2f >= %.2f). Transitioning to HOLD_30.", currentDistance, targetDistance30);
-        transitionTo(HOLD_30);
+        ESP_LOGI(__FILE__, "WAIT_FIRST: Distance target met (%.2f >= %.2f). Transitioning to HOLD_FIRST.", currentDistance, targetDistance30);
+        transitionTo(HOLD_FIRST);
         stageStartTime = millis();
       } else if (currentDistance == -999.0) {
-          ESP_LOGW(__FILE__, "WAIT_30: distanceListener has no value yet!");
+          ESP_LOGW(__FILE__, "WAIT_FIRST: distanceListener has no value yet!");
       }
       break;
 
-    case HOLD_30:
+    case HOLD_FIRST:
       if (millis() - stageStartTime >= 30000) { // hold for 30s
-        ESP_LOGD(__FILE__, "HOLD_30: Hold time complete. Transitioning to DEPLOY_75.");
-        transitionTo(DEPLOY_75);
+        ESP_LOGD(__FILE__, "HOLD_FIRST: Hold time complete. Transitioning to DEPLOY_SECOND.");
+        transitionTo(DEPLOY_SECOND);
         currentStageTargetLength = 0.0;
       }
       break;
 
-    case DEPLOY_75:
+    case DEPLOY_SECOND:
       if (currentChainLength >= chain75) {
-        ESP_LOGI(__FILE__, "DEPLOY_75: Target %.2f m reached. Transitioning to WAIT_75.", chain75);
+        ESP_LOGI(__FILE__, "DEPLOY_SECOND: Target %.2f m reached. Transitioning to WAIT_SECOND.", chain75);
         if (deployPulseEvent != nullptr) {
             sensesp::event_loop()->remove(deployPulseEvent);
             deployPulseEvent = nullptr;
@@ -346,30 +346,30 @@ void DeploymentManager::updateDeployment() {
         if (chainController->isActive()) {
             chainController->stop();
         }
-        transitionTo(WAIT_75);
+        transitionTo(WAIT_SECOND);
         stageStartTime = millis();
         break;
       }
       // Start continuous deployment if not already started
       if (deployPulseEvent == nullptr) {
-        ESP_LOGI(__FILE__, "DEPLOY_75: Starting continuous deployment to %.2fm", chain75);
+        ESP_LOGI(__FILE__, "DEPLOY_SECOND: Starting continuous deployment to %.2fm", chain75);
         startContinuousDeployment(chain75);
       }
       break;
 
-    case WAIT_75:
+    case WAIT_SECOND:
       if (currentDistance != -999.0 && currentDistance >= targetDistance75) {
-        ESP_LOGI(__FILE__, "WAIT_75: Distance target met (%.2f >= %.2f). Transitioning to HOLD_75.", currentDistance, targetDistance75);
-        transitionTo(HOLD_75);
+        ESP_LOGI(__FILE__, "WAIT_SECOND: Distance target met (%.2f >= %.2f). Transitioning to HOLD_SECOND.", currentDistance, targetDistance75);
+        transitionTo(HOLD_SECOND);
         stageStartTime = millis();
       } else if (currentDistance == -999.0) {
-          ESP_LOGW(__FILE__, "WAIT_75: distanceListener has no value yet!");
+          ESP_LOGW(__FILE__, "WAIT_SECOND: distanceListener has no value yet!");
       }
       break;
 
-    case HOLD_75:
+    case HOLD_SECOND:
       if (millis() - stageStartTime >= 75000) { // hold for 75s
-        ESP_LOGD(__FILE__, "HOLD_75: Hold time complete. Transitioning to DEPLOY_100.");
+        ESP_LOGD(__FILE__, "HOLD_SECOND: Hold time complete. Transitioning to DEPLOY_100.");
         transitionTo(DEPLOY_100);
         currentStageTargetLength = 0.0;
       }
@@ -434,15 +434,15 @@ String DeploymentManager::getStageDisplayName(Stage stage) const {
         case WAIT_TIGHT:
         case HOLD_DROP:
             return "Alignment";
-        case DEPLOY_30:
+        case DEPLOY_FIRST:
             return "Deploy 40";
-        case WAIT_30:
-        case HOLD_30:
+        case WAIT_FIRST:
+        case HOLD_FIRST:
             return "Digin 40";
-        case DEPLOY_75:
+        case DEPLOY_SECOND:
             return "Deploy 80";
-        case WAIT_75:
-        case HOLD_75:
+        case WAIT_SECOND:
+        case HOLD_SECOND:
             return "Digin 80";
         case DEPLOY_100:
             return "Final Deploy";
