@@ -315,7 +315,8 @@ void setup() {
       ESP_LOGD(__FILE__, "Button UP OFF => Free fall");
       buttonDelayPtr = event_loop()->onDelay(up_delay, [direction, di1_gpio, di2_gpio]() {
         // Before setting free fall, check if other relay is active
-        if (digitalRead(di2_gpio) == HIGH) {
+        // NOTE: Relays are ACTIVE-LOW (energized = LOW, off = HIGH)
+        if (digitalRead(di2_gpio) == LOW) {
           direction->set("down");
         } else {
           direction->set("free fall");
@@ -347,7 +348,8 @@ void setup() {
       ESP_LOGD(__FILE__, "Button DOWN OFF => Free fall");
       buttonDelayPtr = event_loop()->onDelay(down_delay, [direction, di1_gpio, di2_gpio]() {
         // Before setting free fall, check if other relay is active
-        if (digitalRead(di1_gpio) == HIGH) {
+        // NOTE: Relays are ACTIVE-LOW (energized = LOW, off = HIGH)
+        if (digitalRead(di1_gpio) == LOW) {
           direction->set("up");
         } else {
           direction->set("free fall");
