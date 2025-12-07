@@ -160,8 +160,8 @@ void ChainController::control(float current_pos) {
     // Check if movement has exceeded calculated timeout
     unsigned long elapsed = millis() - movement_start_time_;
     if (elapsed > move_timeout_) {
-        ESP_LOGE(__FILE__, "control: MOVEMENT TIMEOUT - elapsed=%lu ms, timeout=%lu ms, distance=%.2f m, state=%s. Stopping windlass for safety.",
-                 elapsed, move_timeout_, move_distance_,
+        ESP_LOGE(__FILE__, "control: MOVEMENT TIMEOUT - elapsed=%lu ms, timeout=%lu ms, state=%s. Stopping windlass for safety.",
+                 elapsed, move_timeout_,
                  (state_ == ChainState::LOWERING) ? "LOWERING" : "RAISING");
         stop();
         return;

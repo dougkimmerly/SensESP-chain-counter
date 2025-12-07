@@ -87,7 +87,6 @@ private:
     ChainState state_;
     unsigned long movement_start_time_;
     float start_position_= 0.0;
-    float move_distance_= 0.0;
     float move_speed_ms_per_m_;
     unsigned long move_timeout_;
 
