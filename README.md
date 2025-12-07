@@ -43,10 +43,10 @@ The system has three main components:
    - Continuous deployment monitoring
    - Safety brake (pauses if slack > 85% of depth)
 
-3. **RetrievalManager** ([src/RetrievalManager.cpp](src/RetrievalManager.cpp))
-   - Slack-based automated retrieval
-   - Relay wear protection (3-second cooldown between raises)
-   - Minimum raise threshold (1.0m) to prevent small repeated raises
+3. **Automated Retrieval** ([src/main.cpp](src/main.cpp))
+   - Simple direct retrieval via ChainController
+   - Single raiseAnchor() command with 4x timeout multiplier
+   - Slack-based pause/resume handled by ChainController
 
 ### Slack Calculation
 
@@ -122,26 +122,27 @@ DROP → WAIT_TIGHT → HOLD_DROP
 
 ### Retrieval Sequence
 
-Retrieval uses a slack-aware FSM to safely raise the anchor:
+Retrieval uses a simple direct command to ChainController:
 
 ```
-CHECKING_SLACK → RAISING → WAITING_FOR_SLACK → (repeat) → COMPLETE
+autoRetrieve → Calculate amount → raiseAnchor(amount) → COMPLETE
 ```
 
 **Key features:**
-- **Slack Check**: Won't raise unless slack ≥ 1.5m
-- **Minimum Raise**: Only raises if ≥ 1.0m available (prevents relay wear from small repeated raises)
-- **Cooldown Protection**: 3-second wait between raises to protect relay
-- **Negative Slack Detection**: Stops if slack goes negative (chain becomes taut), waits for slack to build up again
+- **Single Command**: One raiseAnchor() call with calculated amount
+- **No External Timeout**: Relies on ChainController's built-in movement timeout and safety mechanisms
+- **Automatic Pause/Resume**: ChainController handles slack monitoring and pause/resume during raising
+- **Final Pull**: When rode < depth + bow + 3m, skips slack checks for final pull
 
 ### Safety Limits
 
 | Parameter | Value | Purpose |
 |-----------|-------|---------|
 | MAX_SLACK_RATIO | 0.85 | Deployment pauses if slack > 85% of effective depth |
-| MIN_RAISE_AMOUNT | 1.0m | Only raise if ≥ 1m available |
-| MIN_SLACK_TO_START | 1.5m | Won't raise unless slack ≥ 1.5m |
-| COOLDOWN_AFTER_RAISE | 3s | Wait 3 seconds between raises |
+| PAUSE_SLACK_M | 0.2m | Pause raising when slack drops below this |
+| RESUME_SLACK_M | 1.0m | Resume raising when slack builds to this |
+| SLACK_COOLDOWN_MS | 3s | Cooldown between pause/resume actions |
+| FINAL_PULL_THRESHOLD_M | 3.0m | Skip slack checks when rode < depth+bow+3m |
 | BOW_HEIGHT_OFFSET | 2.0m | Bow height above waterline for slack calculations |
 
 ## Hardware Configuration
@@ -278,7 +279,9 @@ For detailed information, see:
 - **Centralized Catenary Physics**: All slack calculations now use consistent physics model
 - **Continuous Deployment**: Replaced pulsed deployment (0.5m/1.0m increments) with single large deployment monitored every 500ms
 - **Safety Brake**: Deployment automatically pauses and resumes based on slack levels
-- **Relay Wear Protection**: Retrieval now enforces 3-second cooldown and 1.0m minimum raise to protect relay
+- **Simplified Retrieval**: Removed RetrievalManager FSM in favor of direct ChainController command with extended timeout
+- **Slack-Based Pause/Resume**: ChainController now handles automatic pause/resume during raising based on slack levels
+- **Final Pull Logic**: Skips slack checks when chain near vertical (rode < depth+bow+3m)
 - **Bow Height Offset**: Slack calculations now correctly account for 2m bow height above waterline
 - **Documentation Reorganization**: Added comprehensive architecture and reference documentation
 

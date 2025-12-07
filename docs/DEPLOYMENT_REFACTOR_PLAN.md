@@ -60,7 +60,7 @@ The system ALREADY has slack monitoring but uses it only as a safety limit, not 
 **Rationale:**
 1. **Single Source of Truth**: ChainController already calculates slack every 500ms and publishes it
 2. **Separation of Concerns**: ChainController owns chain position/state; DeploymentManager owns deployment strategy
-3. **Reusability**: Slack calculation used by both DeploymentManager AND RetrievalManager
+3. **Reusability**: Slack calculation used by DeploymentManager and autoRetrieve command
 4. **Signal K Integration**: ChainController already publishes slack to `navigation.anchor.chainSlack`
 5. **Simplicity**: One calculation point, consumed by multiple clients
 

@@ -32,8 +32,8 @@
         └──────────┬──────────────────────────────┬──────────┘
                    │                               │
         ┌──────────▼──────────┐        ┌──────────▼──────────┐
-        │  DeploymentManager  │        │  RetrievalManager   │
-        │  (Automation FSM)   │        │  (Automation FSM)   │
+        │  DeploymentManager  │        │  autoRetrieve       │
+        │  (Automation FSM)   │        │  (direct command)   │
         └──────────┬──────────┘        └──────────┬──────────┘
                    │                               │
         ┌──────────▼──────────────────────────────▼──────────┐
@@ -161,49 +161,42 @@ START → isAutoAnchorValid()? ──NO──→ (do nothing)
 
 ---
 
-## Retrieval State Flow
+## Retrieval Flow
 
 ```
-START → isRunning = true
+START → autoRetrieve command received
          │
          ▼
     ┌─────────────────────────────────────────┐
-    │  CHECKING_SLACK                         │
-    │  Check: slack ≥ MIN_SLACK_TO_START_M?   │
-    │         (default: 1.5m)                 │
-    ├─ NO  ────────────────────────┐         │
-    │                              │         │
-    │ YES                          │         │
-    │  │                           │         │
-    │  ├─ Check cooldown (3s)?     │         │
-    │  │  ├─ In cooldown: skip     │         │
-    │  │  └─ Cooldown elapsed      │         │
-    │  │                           │         │
-    │  └─ Check amount ≥ 1.0m?     │         │
-    │     └─ Yes: raise            │         │
-    │        └─ raiseAnchor(slack) │         │
-    │                              │         │
-    └──────────────┬───────────────┘         │
-                   │                         │
-         ┌─────────▼──────────┐              │
-         │  RAISING           │              │
-         │  Wait for movement │              │
-         │  Complete          │              │
-         └─────────┬──────────┘              │
-                   │                         │
-         ┌─────────▼──────────┐              │
-         │  WAITING_FOR_SLACK │◄─────────────┘
-         │  Build up slack    │
-         │  for next raise    │
+    │  Calculate amount to raise              │
+    │  amountToRaise = currentRode - 2.0m     │
+    └──────────────┬──────────────────────────┘
+                   │
+         ┌─────────▼──────────┐
+         │  Single raise      │
+         │  command           │
+         │                    │
+         │  raiseAnchor(amt)  │
          └─────────┬──────────┘
                    │
-      (repeat until rode ≤ COMPLETION_THRESHOLD_M)
+         ┌─────────▼──────────┐
+         │  ChainController   │
+         │  handles movement  │
+         │  (with built-in    │
+         │  timeout & slack-  │
+         │  based pause/      │
+         │  resume)           │
+         └─────────┬──────────┘
+                   │
+    (Movement completes or ChainController timeout occurs)
                    │
          ┌─────────▼──────────┐
          │  COMPLETE          │
          │  stop()            │
          └────────────────────┘
 ```
+
+Note: Slack-based pause/resume logic is handled automatically by ChainController during raising. No external timeout needed - ChainController has built-in movement timeout.
 
 ---
 
@@ -299,16 +292,16 @@ START DEPLOY_30:
 
 ### Problem: Negative slack during retrieval
 
-**Trigger:** `slack < 0` while raising (rope became taut)
+**Trigger:** `slack < 0` while raising (chain became taut)
 
 **Response:**
 ```
-1. updateRetrieval() detects negative slack
-2. Calls: chainController->stop()
-3. Relay deactivates (motor stops)
-4. Transitions to: WAITING_FOR_SLACK
-5. Waits for slack to build up again
-6. Resumes retrieval when slack ≥ threshold
+1. ChainController's slack monitoring detects negative slack
+2. Calls: stop() to pause raising
+3. Relay deactivates (windlass motor stops)
+4. Waits for slack to build up (boat drifts)
+5. Resumes raising when slack ≥ threshold
+6. This pause/resume happens automatically within the raiseAnchor() operation
 ```
 
 ### Problem: Relay gets stuck (timeout)
@@ -364,9 +357,10 @@ Time = t0+500ms: Next monitoring cycle
 |-----------|-------|---------|
 | MAX_SLACK_RATIO | 0.85 | Max slack = 85% of depth (deployment safety) |
 | MONITOR_INTERVAL_MS | 500 | Check conditions every 500ms |
-| MIN_SLACK_TO_START_M | 1.5 | Minimum slack to consider raising (retrieval) |
-| MIN_RAISE_AMOUNT_M | 1.0 | Only raise if ≥ 1m available (prevent relay wear) |
-| COOLDOWN_AFTER_RAISE_MS | 3000 | 3s between raises (relay protection) |
+| PAUSE_SLACK_M | 0.2 | Pause raising when slack drops below this |
+| RESUME_SLACK_M | 1.0 | Resume raising when slack builds to this |
+| SLACK_COOLDOWN_MS | 3000 | 3s cooldown between pause/resume actions |
+| FINAL_PULL_THRESHOLD_M | 3.0 | Skip slack checks when rode < depth+bow+3m |
 | BOW_HEIGHT_M | 2.0 | Bow height above water (slack calculation) |
 | CHAIN_WEIGHT_PER_METER_KG | 2.2 | Chain weight in water (catenary) |
 

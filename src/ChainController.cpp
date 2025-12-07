@@ -53,6 +53,8 @@ ChainController::ChainController(
     downRelayPin_(downRelayPin),
     upRelayPin_(upRelayPin),
     state_(ChainState::IDLE), // Default state
+    movement_start_time_(0),  // Initialize to prevent undefined behavior
+    move_timeout_(10000),     // Safe default timeout (10 seconds)
     horizontalSlack_(new sensesp::ObservableValue<float>(0.0)),
     depthListener_(new sensesp::SKValueListener<float>("environment.depth.belowSurface", 2000, "/depth/sk")),
     distanceListener_(new sensesp::SKValueListener<float>("navigation.anchor.distanceFromBow", 2000, "/distance/sk")),
@@ -148,6 +150,22 @@ void ChainController::raiseAnchor(float amount) {
 
 void ChainController::control(float current_pos) {
     if (state_ == ChainState::IDLE) return;
+
+    // Defensive guard - prevent undefined behavior if movement_start_time_ not set
+    if (movement_start_time_ == 0) {
+        ESP_LOGW(__FILE__, "control: movement_start_time_ is 0 but state is not IDLE. This should not happen.");
+        return;
+    }
+
+    // Check if movement has exceeded calculated timeout
+    unsigned long elapsed = millis() - movement_start_time_;
+    if (elapsed > move_timeout_) {
+        ESP_LOGE(__FILE__, "control: MOVEMENT TIMEOUT - elapsed=%lu ms, timeout=%lu ms, distance=%.2f m, state=%s. Stopping windlass for safety.",
+                 elapsed, move_timeout_, move_distance_,
+                 (state_ == ChainState::LOWERING) ? "LOWERING" : "RAISING");
+        stop();
+        return;
+    }
 
     switch (state_) {
         case ChainState::LOWERING:

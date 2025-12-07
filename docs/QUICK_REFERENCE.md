@@ -22,10 +22,12 @@
 - **Safety brake**: [src/DeploymentManager.cpp:132-140](../src/DeploymentManager.cpp#L132-L140) - Slack limit check (85% of depth)
 
 ### Retrieval Logic
-- **Retrieval state machine**: [src/RetrievalManager.cpp:90-232](../src/RetrievalManager.cpp#L90-L232) - `updateRetrieval()`
-- **Cooldown period**: [src/RetrievalManager.h:45](../src/RetrievalManager.h#L45) - `COOLDOWN_AFTER_RAISE_MS = 3000`
-- **Minimum raise amount**: [src/RetrievalManager.h:44](../src/RetrievalManager.h#L44) - `MIN_RAISE_AMOUNT_M = 1.0`
-- **Raise hysteresis**: [src/RetrievalManager.h:43](../src/RetrievalManager.h#L43) - `MIN_SLACK_TO_START_M = 1.5`
+- **Retrieval command**: [src/main.cpp](../src/main.cpp) - `autoRetrieve` command handler
+- **Slack-based pause/resume**: [src/ChainController.cpp](../src/ChainController.cpp) - Automatic pause/resume during raising
+- **Pause slack threshold**: [src/ChainController.h:73](../src/ChainController.h#L73) - `PAUSE_SLACK_M = 0.2m`
+- **Resume slack threshold**: [src/ChainController.h:74](../src/ChainController.h#L74) - `RESUME_SLACK_M = 1.0m`
+- **Slack cooldown**: [src/ChainController.h:75](../src/ChainController.h#L75) - `SLACK_COOLDOWN_MS = 3000`
+- **Final pull threshold**: [src/ChainController.h:77](../src/ChainController.h#L77) - `FINAL_PULL_THRESHOLD_M = 3.0m`
 
 ### Main Firmware Loop
 - **Entry point**: [src/main.cpp](../src/main.cpp)
@@ -43,13 +45,13 @@ MAX_SLACK_RATIO = 0.85              // 85% of depth is max acceptable slack
 MONITOR_INTERVAL_MS = 500            // Check conditions every 500ms
 ```
 
-### Safety Parameters (RetrievalManager)
+### Slack-Based Pause/Resume (ChainController)
 ```cpp
-MIN_SLACK_TO_START_M = 1.5           // Start considering raises at 1.5m slack
-MIN_RAISE_AMOUNT_M = 1.0             // Only raise if at least 1.0m available
-COOLDOWN_AFTER_RAISE_MS = 3000       // 3-second wait between raises
-COMPLETION_THRESHOLD_M = 2.0         // Retrieval complete when rode ≤ 2.0m
-FINAL_PULL_THRESHOLD_M = 10.0        // Switch to continuous pull when rode < depth + 10m
+PAUSE_SLACK_M = 0.2                  // Pause raising when slack drops below this
+RESUME_SLACK_M = 1.0                 // Resume raising when slack builds to this
+SLACK_COOLDOWN_MS = 3000             // 3s cooldown between pause/resume actions
+FINAL_PULL_THRESHOLD_M = 3.0         // Skip slack checks when rode < depth+bow+3m
+BOW_HEIGHT_M = 2.0                   // Height from bow roller to water surface
 ```
 
 ### Physics Constants (ChainController)

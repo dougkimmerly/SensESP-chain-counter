@@ -281,14 +281,16 @@ if (current_slack > depth * 0.5) {
 }
 ```
 
-### Pattern 3: Slack-Based Retrieval
+### Pattern 3: Automated Retrieval
 ```cpp
-// From RetrievalManager::updateRetrieval()
-float slack = chainSlackListener_->get();
-if (slack >= 1.5 && slack >= 1.0) {
-    chainController->raiseAnchor(slack);  // Retrieve available slack
+// From main.cpp autoRetrieve command handler
+float currentRode = chainController->getChainLength();
+float amountToRaise = currentRode - 2.0;  // Raise to 2.0m
+if (amountToRaise > 0.1) {
+    chainController->raiseAnchor(amountToRaise);
+    // No external timeout - ChainController has built-in movement timeout
+    // and slack-based pause/resume logic
 }
-// Wait for completion, then re-check
 ```
 
 ### Pattern 4: Speed Calibration
@@ -319,12 +321,11 @@ chainController->saveSpeedsToPrefs();
 - Calls `getHorizontalSlackObservable()` to check slack
 - Calls `getCurrentDepth()` for depth value
 
-### RetrievalManager
-- Calls `raiseAnchor(amount)` for slack-based retrieval
-- Calls `stop()` on negative slack
-- Calls `isActive()` to check completion
-- Calls `getChainLength()` to determine completion
-- Calls `getHorizontalSlackObservable()` to check available slack
+### autoRetrieve (main.cpp)
+- Calls `raiseAnchor(amount)` with calculated amount (rode - 2.0m)
+- No external timeout - relies on ChainController's built-in movement timeout
+- ChainController handles automatic slack-based pause/resume during raising
+- User can manually call `stop()` if needed
 
 ### Signal K Integration (main.cpp)
 - Publishes chain length to `navigation.anchor.rodeDeployed`
@@ -428,17 +429,17 @@ void updateTimeout(float amount, float speed_ms_per_m) {
 - Directly manipulate relay pins
 - Assume movements complete instantly
 
-### RetrievalManager
+### autoRetrieve Command (main.cpp)
 ✅ **DO:**
-- Call `raiseAnchor()` with calculated slack amount
-- Monitor `isActive()` to detect completion
-- Call `getChainLength()` to check rode deployed
-- Call `stop()` on emergency conditions
+- Call `raiseAnchor()` with calculated amount (rode - 2.0m)
+- Rely on ChainController's built-in movement timeout
+- Trust ChainController for slack-based pause/resume
+- Allow user to manually `stop()` if needed
 
 ❌ **DON'T:**
-- Issue multiple lowerAnchor()/raiseAnchor() while one is active
-- Assume GPS distance equals actual horizontal distance
-- Ignore catenary effects in calculations
+- Issue multiple raiseAnchor() calls while one is active
+- Add external timeout (ChainController has built-in protection)
+- Try to manually manage slack pause/resume (ChainController handles this)
 
 ### Test Code
 ✅ **DO:**
@@ -517,5 +518,5 @@ DeploymentManager (when running)
 - **Processing:** State machine, timeout monitoring, catenary physics
 - **Output:** Relay activation, slack calculation, speed statistics
 
-**Higher-level systems (DeploymentManager, RetrievalManager) orchestrate the strategy of what movements to make and when. ChainController executes the movement safely and tracks position accurately.**
+**Higher-level systems (DeploymentManager and autoRetrieve command in main.cpp) orchestrate the strategy of what movements to make and when. ChainController executes the movement safely, tracks position accurately, and handles slack-based pause/resume automatically.**
 

@@ -46,26 +46,20 @@ Automated anchor deployment using multi-stage finite state machine
 10. **DEPLOY_100**: Deploy remaining chain to full scope (5:1 ratio)
 11. **COMPLETE**: Deployment finished
 
-### 3. RetrievalManager (src/RetrievalManager.cpp)
-Automated anchor retrieval with slack-based control
+### 3. Automated Retrieval (src/main.cpp)
+Simple automated anchor retrieval using direct ChainController commands
 
 **Responsibilities:**
-- Monitors chain slack continuously
-- Raises chain opportunistically when sufficient slack is available
-- Handles two-phase retrieval: slack-based and final pull
-- Stops if slack goes negative (prevents pulling boat toward anchor)
-
-**Retrieval States:**
-1. **IDLE**: Not running
-2. **CHECKING_SLACK**: Evaluating if enough slack exists to raise
-3. **RAISING**: Actively raising chain
-4. **WAITING_FOR_SLACK**: Paused, waiting for boat to drift and create slack
-5. **COMPLETE**: Retrieval finished (rode ≤ 2m)
+- Monitors current chain position
+- Raises chain directly via ChainController
+- Stops when chain reaches 2.0m threshold
 
 **Retrieval Strategy:**
-- Normal phase: Raises when slack ≥ 2m
-- Final pull phase: When rode < depth + 10m, raises continuously to completion
-- Safety: Stops immediately if slack goes negative during raising
+- Calculates amount to raise: current_rode - 2.0m
+- Single raise command with no external timeout
+- Relies on ChainController's built-in movement timeout and safety mechanisms
+- ChainController handles slack-based pause/resume automatically
+- Directly calls `chainController->raiseAnchor()` without intermediate FSM
 
 ---
 
@@ -127,11 +121,11 @@ Signal K PUT → StringSKPutRequestListener → Command Handler (main.cpp)
                                                     ↓
                         ┌───────────────────────────┼───────────────────────┐
                         ↓                           ↓                       ↓
-                ChainController              DeploymentManager      RetrievalManager
-                (direct commands)            (autoDrop FSM)         (autoRetrieve FSM)
+                ChainController              DeploymentManager      autoRetrieve command
+                (direct commands)            (autoDrop FSM)         (direct raiseAnchor)
                         ↓                           ↓                       ↓
                     lowerAnchor()              lowerAnchor()           raiseAnchor()
-                    raiseAnchor()              (staged)                (slack-based)
+                    raiseAnchor()              (staged)                (single command)
                     stop()
 ```
 
@@ -146,10 +140,11 @@ Signal K PUT → StringSKPutRequestListener → Command Handler (main.cpp)
 - Event loop (`event_loop()->onDelay()`, `onRepeat()`) for non-blocking timing
 
 ### 2. State Machine Pattern
-Both DeploymentManager and RetrievalManager use explicit finite state machines:
+DeploymentManager uses explicit finite state machine:
 - Clear state transitions with logging
 - Stage-based progression prevents race conditions
 - Single responsibility per state
+- Retrieval is simplified to direct ChainController command (no FSM needed)
 
 ### 3. Self-Calibrating Speed Learning
 ChainController learns windlass speeds over time:
@@ -225,14 +220,12 @@ main.cpp (setup & command handling)
     │   ├── distanceListener (SKValueListener) - monitors distance from anchor
     │   └── horizontalSlack (ObservableValue) - computed slack available
     │
-    ├── DeploymentManager (automated deployment FSM)
-    │   ├── Uses ChainController for motor commands
-    │   ├── windSpeedListener (SKValueListener) - for force calculations
-    │   └── Implements multi-stage deployment logic
-    │
-    └── RetrievalManager (automated retrieval FSM)
+    └── DeploymentManager (automated deployment FSM)
         ├── Uses ChainController for motor commands
-        └── chainSlackListener (SKValueListener) - monitors slack
+        ├── windSpeedListener (SKValueListener) - for force calculations
+        └── Implements multi-stage deployment logic
+
+Note: Automated retrieval is handled directly in main.cpp via chainController->raiseAnchor()
 
 SensESP Framework Components:
     ├── DigitalInputChange - debounced GPIO inputs (buttons, hall sensor)

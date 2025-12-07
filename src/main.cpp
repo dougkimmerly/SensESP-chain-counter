@@ -240,25 +240,70 @@ void setup() {
     return true;
   });
 
-  /* Save the chain length function */
-  auto save_chain_length = [accumulator]() {
+  /* Force save chain length (no thresholds, used on stop/timeout) */
+  auto force_save_chain_length = [accumulator]() {
     if(ignore_input) {
       return;
     }
     float current_length = accumulator->get();
-    // ESP_LOGD(__FILE__, "Deployed chain of %f saved to nvm.", current_length);
     Preferences prefs;
-    prefs.begin("chain", false);  // false = writeable
-    prefs.putFloat("length", current_length);
+    if (!prefs.begin("chain", false)) {
+      ESP_LOGE(__FILE__, "Failed to open NVS namespace 'chain' for writing");
+      return;
+    }
+    size_t written = prefs.putFloat("length", current_length);
     prefs.end();
+    if (written == 0) {
+      ESP_LOGE(__FILE__, "Failed to write chain position to NVS");
+    } else {
+      ESP_LOGD(__FILE__, "Chain position force-saved: %.2fm", current_length);
+    }
+  };
+
+  /* Save the chain length function */
+  auto save_chain_length = [accumulator]() {
+    static float last_saved_position = 0.0;
+    static unsigned long last_save_time = 0;
+    static constexpr float SAVE_THRESHOLD_M = 2.0;  // Only save every 2m
+    static constexpr unsigned long MIN_SAVE_INTERVAL_MS = 5000;  // 5 seconds minimum
+
+    if(ignore_input) {
+      return;
+    }
+
+    float current_length = accumulator->get();
+    unsigned long now = millis();
+
+    bool distance_threshold_met = fabs(current_length - last_saved_position) >= SAVE_THRESHOLD_M;
+    bool time_threshold_met = (now - last_save_time) >= MIN_SAVE_INTERVAL_MS;
+
+    // Save if both distance AND time thresholds are met
+    // AND logic ensures minimal writes: only when significant movement (2m) has occurred
+    // AND sufficient time (5s) has passed since last save
+    if (distance_threshold_met && time_threshold_met) {
+        Preferences prefs;
+        if (!prefs.begin("chain", false)) {
+          ESP_LOGE(__FILE__, "Failed to open NVS namespace 'chain' for writing");
+          return;
+        }
+        size_t written = prefs.putFloat("length", current_length);
+        prefs.end();
+
+        if (written == 0) {
+          ESP_LOGE(__FILE__, "Failed to write chain position to NVS");
+        } else {
+          last_saved_position = current_length;
+          last_save_time = now;
+          ESP_LOGD(__FILE__, "Chain position saved: %.2fm (delta: %.2fm)", current_length, fabs(current_length - last_saved_position));
+        }
+    }
   };
 
   /* React to UP action */
-  auto* up_handler = new LambdaConsumer<int>( [up_delay, direction](int input) {
+  auto* up_handler = new LambdaConsumer<int>( [up_delay, direction, di1_gpio, di2_gpio](int input) {
     ESP_LOGD(__FILE__, "Button UP Changed");
-    if(ignore_input || automation_active) {
-      return;
-    }
+
+    // ALWAYS update direction based on actual GPIO state (works during manual AND automation)
     if (buttonDelayPtr != nullptr) {
       event_loop()->remove(buttonDelayPtr);
       buttonDelayPtr=nullptr;
@@ -268,20 +313,29 @@ void setup() {
       direction->set("up");
     } else {
       ESP_LOGD(__FILE__, "Button UP OFF => Free fall");
-      buttonDelayPtr = event_loop()->onDelay(up_delay, [direction]() {
-        direction->set("free fall");
+      buttonDelayPtr = event_loop()->onDelay(up_delay, [direction, di1_gpio, di2_gpio]() {
+        // Before setting free fall, check if other relay is active
+        if (digitalRead(di2_gpio) == HIGH) {
+          direction->set("down");
+        } else {
+          direction->set("free fall");
+        }
         buttonDelayPtr=nullptr;
       });
+    }
+
+    // Block manual windlass control during automation (but direction is already set above)
+    if(ignore_input || automation_active) {
+      return;
     }
   });
   di1_input->connect_to(di1_debounce)->connect_to(up_handler);
 
   /* React to DOWN action */
-  auto* down_handler = new LambdaConsumer<int>( [down_delay, direction](int input) {
+  auto* down_handler = new LambdaConsumer<int>( [down_delay, direction, di1_gpio, di2_gpio](int input) {
     ESP_LOGD(__FILE__, "Button DOWN Changed");
-    if(ignore_input || automation_active) {
-      return;
-    }
+
+    // ALWAYS update direction based on actual GPIO state (works during manual AND automation)
     if (buttonDelayPtr != nullptr) {
       event_loop()->remove(buttonDelayPtr);
       buttonDelayPtr=nullptr;
@@ -291,17 +345,27 @@ void setup() {
       direction->set("down");
     } else {
       ESP_LOGD(__FILE__, "Button DOWN OFF => Free fall");
-      buttonDelayPtr = event_loop()->onDelay(down_delay, [direction]() {
-        direction->set("free fall");
+      buttonDelayPtr = event_loop()->onDelay(down_delay, [direction, di1_gpio, di2_gpio]() {
+        // Before setting free fall, check if other relay is active
+        if (digitalRead(di1_gpio) == HIGH) {
+          direction->set("up");
+        } else {
+          direction->set("free fall");
+        }
         buttonDelayPtr=nullptr;
       });
+    }
+
+    // Block manual windlass control during automation (but direction is already set above)
+    if(ignore_input || automation_active) {
+      return;
     }
   });
   di2_input->connect_to(di2_debounce)->connect_to(down_handler);
 
   /* React to COUNTER action */
   auto* counter_handler = new LambdaConsumer<int>( [
-    gypsy_circum, max_chain, direction, save_chain_length, accumulator
+    gypsy_circum, max_chain, direction, save_chain_length, accumulator, di1_gpio, di2_gpio
      ](int input) {
     if(ignore_input) {
       return;
@@ -310,23 +374,55 @@ void setup() {
     if (input == 1) {
         float current_value = accumulator->get();
 
+      // Determine actual direction by reading GPIO pins directly
+      // This works during both manual and automated operation
+      // NOTE: Relays are ACTIVE-LOW (energized = LOW, off = HIGH)
+      bool up_relay_active = (digitalRead(di1_gpio) == LOW);
+      bool down_relay_active = (digitalRead(di2_gpio) == LOW);
+
+      // CRITICAL SAFETY CHECK - both relays should NEVER be HIGH simultaneously
+      if (up_relay_active && down_relay_active) {
+        ESP_LOGE(__FILE__, "SAFETY VIOLATION: Both relays HIGH! UP=%d DOWN=%d - Ignoring counter pulse",
+                 up_relay_active, down_relay_active);
+        return;  // DO NOT count, this is an illegal and dangerous state
+      }
+
+      // Update direction observable based on GPIO state
+      // This ensures direction is always accurate for both manual and automated operation
+      if (up_relay_active) {
+        direction->set("up");
+      } else if (down_relay_active) {
+        direction->set("down");
+      } else {
+        direction->set("free fall");
+      }
+
       // ESP_LOGD(__FILE__, "The Gypsy is turning");
-      if (direction->get() == "up") {
+      if (up_relay_active) {
+        // UP relay is active - chain is being raised (decrement)
         if(current_value - gypsy_circum < 0) {
             // ESP_LOGD(__FILE__, "Already at 0m of Chain ");
         } else {
             accumulator->set(-1);
             // ESP_LOGD(__FILE__, "Decrement Deployed Chain");
         }
-
-      } else {
+      } else if (down_relay_active) {
+        // DOWN relay is active - chain is being lowered (increment)
         if(current_value + gypsy_circum > max_chain) {
             // ESP_LOGD(__FILE__, "Already at the Max %fm Chain Length", max_chain);
         } else {
             accumulator->set(1);
             // ESP_LOGD(__FILE__, "Increment Deployed Chain");
         }
-        
+      } else {
+        // Neither relay active - freefall or manual operation
+        // Chain can only deploy (lower) without powered assistance
+        if(current_value + gypsy_circum > max_chain) {
+            // ESP_LOGD(__FILE__, "Already at the Max %fm Chain Length", max_chain);
+        } else {
+            accumulator->set(1);
+            // ESP_LOGD(__FILE__, "Increment Deployed Chain (freefall)");
+        }
       }
       save_chain_length();
     }
@@ -439,7 +535,7 @@ void setup() {
 
   */
   command_listener->connect_to(new LambdaConsumer<String>( [
-    dnRelayPin, upRelayPin, accumulator, anchor_command
+    dnRelayPin, upRelayPin, accumulator, anchor_command, force_save_chain_length
      ](String input) {
 
       ESP_LOGI(__FILE__, "Command received is %s", input.c_str());
@@ -456,6 +552,7 @@ void setup() {
           chainController->stop();
       }
       deploymentManager->stop();  // Always stop deployment state machine
+      delay(100);  // Allow stop operations to complete before starting new commands
 
       if(commandDelayPtr != nullptr) {
         event_loop()->remove(commandDelayPtr);
@@ -468,9 +565,10 @@ void setup() {
         float drop_depth = chainController->getDepthListener()->get() + 4.0; // add 4m to the depth for slack chain on bottom
         chainController->lowerAnchor(drop_depth);
         unsigned long moveTime = chainController->getTimeout();
-         commandDelayPtr = event_loop()->onDelay(moveTime, [moveTime, anchor_command]() {
+         commandDelayPtr = event_loop()->onDelay(moveTime, [moveTime, anchor_command, force_save_chain_length]() {
           ESP_LOGI(__FILE__, "movement timeout reached, stopping chain %1u s", moveTime);
           chainController->stop();
+          force_save_chain_length();  // Force save on timeout
           anchor_command->set("idle");
           commandDelayPtr=nullptr;
         });
@@ -495,9 +593,10 @@ void setup() {
         chainController->raiseAnchor(raise_amount);
         unsigned long moveTime = chainController->getTimeout();
 
-        commandDelayPtr = event_loop()->onDelay(moveTime, [moveTime, anchor_command]() {
+        commandDelayPtr = event_loop()->onDelay(moveTime, [moveTime, anchor_command, force_save_chain_length]() {
             ESP_LOGI(__FILE__, "movement timeout reached, stopping chain %1u s", moveTime);
             chainController->stop();
+            force_save_chain_length();  // Force save on timeout
             anchor_command->set("idle");
             automation_active = false;
             commandDelayPtr = nullptr;
@@ -523,9 +622,10 @@ void setup() {
         chainController->lowerAnchor(lower_amount);
         unsigned long moveTime = chainController->getTimeout();
 
-        commandDelayPtr = event_loop()->onDelay(moveTime, [moveTime, anchor_command]() {
+        commandDelayPtr = event_loop()->onDelay(moveTime, [moveTime, anchor_command, force_save_chain_length]() {
             ESP_LOGI(__FILE__, "movement timeout reached, stopping chain %1u s", moveTime);
             chainController->stop();
+            force_save_chain_length();  // Force save on timeout
             anchor_command->set("idle");
             automation_active = false;
             commandDelayPtr = nullptr;
@@ -562,15 +662,8 @@ void setup() {
         ESP_LOGI(__FILE__, "Auto-retrieve: raising %.2fm (from %.2fm to 2.0m)", amountToRaise, currentRode);
         chainController->raiseAnchor(amountToRaise);
         anchor_command->set("autoRetrieve");
-
-        unsigned long moveTime = chainController->getTimeout();
-        commandDelayPtr = event_loop()->onDelay(moveTime, [moveTime, anchor_command]() {
-          ESP_LOGI(__FILE__, "Auto-retrieve timeout, stopping");
-          chainController->stop();
-          anchor_command->set("idle");
-          automation_active = false;
-          commandDelayPtr = nullptr;
-        });
+        // No timeout - ChainController has built-in movement timeout and slack-based pause/resume
+        // User can always stop() manually if needed
       } else {
         ESP_LOGI(__FILE__, "Auto-retrieve: already at or below 2m, nothing to raise");
         anchor_command->set("idle");
@@ -579,6 +672,7 @@ void setup() {
     }
     if (input == "stop") {
         // Both managers already stopped at top of handler
+        force_save_chain_length();  // Force save position when manually stopped
         automation_active = false;
         anchor_command->set("idle");
     }

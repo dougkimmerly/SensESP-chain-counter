@@ -3,9 +3,9 @@
 Marine anchor chain deployment/retrieval system on ESP32 with Signal K integration.
 
 ## Core Files
-- [ChainController.cpp](src/ChainController.cpp) - Motor control, position tracking, catenary physics
+- [ChainController.cpp](src/ChainController.cpp) - Motor control, position tracking, catenary physics, slack-based pause/resume
 - [DeploymentManager.cpp](src/DeploymentManager.cpp) - Automated deployment FSM
-- [RetrievalManager.cpp](src/RetrievalManager.cpp) - Automated retrieval FSM
+- [main.cpp](src/main.cpp) - Command handlers, automated retrieval logic
 
 ## Documentation (read as needed)
 - [ARCHITECTURE_MAP.md](docs/ARCHITECTURE_MAP.md) - Visual diagrams, state flows, data flow
@@ -16,7 +16,7 @@ Marine anchor chain deployment/retrieval system on ESP32 with Signal K integrati
 
 ## State Machines
 - **Deployment**: DROP → WAIT_TIGHT → HOLD_DROP → DEPLOY_30 → WAIT_30 → HOLD_30 → DEPLOY_75 → WAIT_75 → HOLD_75 → DEPLOY_100 → COMPLETE
-- **Retrieval**: CHECKING_SLACK → RAISING → WAITING_FOR_SLACK → COMPLETE
+- **Retrieval**: Simple direct command (autoRetrieve → raiseAnchor with 4x timeout)
 
 ## Critical Physics
 - **Bow height**: 2m from bow to water surface
@@ -27,12 +27,11 @@ Marine anchor chain deployment/retrieval system on ESP32 with Signal K integrati
 ## Key Constants
 | Parameter | Value | Location |
 |-----------|-------|----------|
-| Bow height | 2.0m | ChainController |
-| Final pull threshold | 3.0m | RetrievalManager.h |
-| Retrieval cooldown | 3000ms | RetrievalManager.h |
-| Pause slack | 0.2m | RetrievalManager.h |
-| Resume slack ratio | 30% of depth | RetrievalManager.h |
-| Min raise amount | 1.0m | RetrievalManager.h |
+| Bow height | 2.0m | ChainController.h |
+| Final pull threshold | 3.0m | ChainController.h |
+| Slack cooldown | 3000ms | ChainController.h |
+| Pause slack | 0.2m | ChainController.h |
+| Resume slack | 1.0m | ChainController.h |
 | Deploy pause slack | 120% of depth | DeploymentManager.h |
 | Deploy resume slack | 60% of depth | DeploymentManager.h |
 

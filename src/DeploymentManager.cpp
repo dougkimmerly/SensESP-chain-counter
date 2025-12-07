@@ -43,7 +43,7 @@ void DeploymentManager::start(float scopeRatio) {
   // Calculate total chain needed based on scope ratio
   // Use tide-adjusted depth for deployment calculations to ensure adequate chain for high tide
   anchorDepth = tideAdjustedDepth + 2.0;  // Add 2m for bow height
-  totalChainLength = scopeRatio_ * tideAdjustedDepth;
+  totalChainLength = scopeRatio_ * anchorDepth;  // Scope based on total depth including bow height
   chain30 = 0.40 * totalChainLength;
   chain75 = 0.80 * totalChainLength;
 
@@ -256,40 +256,33 @@ void DeploymentManager::updateDeployment() {
       break;
 
     case WAIT_TIGHT: {
-      // Monitor slack to prevent deadlock
+      // WAIT_TIGHT: Wait for boat to drift away from anchor to target distance
+      // The chain is already deployed, now we wait for wind/current to move the boat
       float currentSlack = chainController->getHorizontalSlackObservable()->get();
 
-      // If slack goes negative or very low, we need more chain for boat to drift
-      // Negative slack means boat is farther than chain can reach
-      // The boat can't drift to target distance without more chain
-      if (currentSlack < 0.5) {
-        ESP_LOGW(__FILE__, "WAIT_TIGHT: Slack too low (%.2f m), deploying 2m more chain to allow drift", currentSlack);
-
-        // Deploy additional chain to create positive slack
-        // This allows the boat to continue drifting to target distance
-        float additionalChain = 2.0;
-        chainController->lowerAnchor(additionalChain);
-
-        // Update target drop depth to reflect the additional chain
-        targetDropDepth += additionalChain;
-
-        // Recalculate target distance with new chain length
-        targetDistanceInit = computeTargetHorizontalDistance(targetDropDepth, anchorDepth);
-
-        ESP_LOGI(__FILE__, "WAIT_TIGHT: Updated targetDropDepth to %.2f m, new targetDistanceInit: %.2f m",
-                 targetDropDepth, targetDistanceInit);
-
-        // Stay in WAIT_TIGHT, will check again on next update
-        break;
-      }
-
-      // Normal waiting for distance logic
+      // Check if boat has reached target distance
       if (currentDistance != -999.0 && currentDistance >= targetDistanceInit) {
         ESP_LOGI(__FILE__, "WAIT_TIGHT: Distance target met (%.2f >= %.2f). Transitioning to HOLD_DROP.", currentDistance, targetDistanceInit);
         transitionTo(HOLD_DROP);
         stageStartTime = millis();
-      } else if (currentDistance == -999.0) {
-          ESP_LOGW(__FILE__, "WAIT_TIGHT: distanceListener has no value yet!");
+        break;
+      }
+
+      // If slack is tight or negative, it means boat has drifted to/past target distance
+      // Tight chain = boat has reached desired scope, transition to next stage
+      if (currentSlack < 0.5) {
+        ESP_LOGI(__FILE__, "WAIT_TIGHT: Chain tight (slack=%.2f m), boat has reached target distance. Transitioning to HOLD_DROP.", currentSlack);
+        transitionTo(HOLD_DROP);
+        stageStartTime = millis();
+        break;
+      }
+
+      // Still waiting for boat to drift - just monitor
+      if (currentDistance == -999.0) {
+        ESP_LOGD(__FILE__, "WAIT_TIGHT: Waiting for distance sensor data (slack=%.2f m)", currentSlack);
+      } else {
+        ESP_LOGD(__FILE__, "WAIT_TIGHT: Waiting for drift - current=%.2f m, target=%.2f m, slack=%.2f m",
+                 currentDistance, targetDistanceInit, currentSlack);
       }
       break;
     }
@@ -413,6 +406,7 @@ void DeploymentManager::updateDeployment() {
 void DeploymentManager::transitionTo(Stage newStage) {
   if (currentStage != newStage) {
     ESP_LOGI(__FILE__, "AutoDeploy: Transitioning from stage %d to %d", (int)currentStage, (int)newStage);
+
     currentStage = newStage;
     _commandIssuedInCurrentDeployStage = false;
 
