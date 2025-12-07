@@ -25,7 +25,7 @@ Signal K Network (depth, wind, distance)
           ↓
     ChainController (physics & motor control)
           ↓
-DeploymentManager / RetrievalManager (automation FSM)
+DeploymentManager (automation FSM)
           ↓
     Relay Hardware (motor control)
 ```
@@ -45,8 +45,8 @@ The system has three main components:
 
 3. **Automated Retrieval** ([src/main.cpp](src/main.cpp))
    - Simple direct retrieval via ChainController
-   - Single raiseAnchor() command with 4x timeout multiplier
-   - Slack-based pause/resume handled by ChainController
+   - Single raiseAnchor() command (no external timeout)
+   - ChainController has built-in movement timeout and slack-based pause/resume
 
 ### Slack Calculation
 
@@ -279,7 +279,7 @@ For detailed information, see:
 - **Centralized Catenary Physics**: All slack calculations now use consistent physics model
 - **Continuous Deployment**: Replaced pulsed deployment (0.5m/1.0m increments) with single large deployment monitored every 500ms
 - **Safety Brake**: Deployment automatically pauses and resumes based on slack levels
-- **Simplified Retrieval**: Removed RetrievalManager FSM in favor of direct ChainController command with extended timeout
+- **Simplified Retrieval**: Removed RetrievalManager FSM in favor of direct ChainController command (no external timeout)
 - **Slack-Based Pause/Resume**: ChainController now handles automatic pause/resume during raising based on slack levels
 - **Final Pull Logic**: Skips slack checks when chain near vertical (rode < depth+bow+3m)
 - **Bow Height Offset**: Slack calculations now correctly account for 2m bow height above waterline

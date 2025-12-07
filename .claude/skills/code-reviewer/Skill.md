@@ -12,7 +12,7 @@ Claude will **automatically** invoke this skill after:
 - Significant code changes (>50 lines modified in C++ files)
 - New feature implementations
 - Bug fixes that modify core logic
-- Any changes to ChainController, DeploymentManager, or RetrievalManager
+- Any changes to ChainController or DeploymentManager
 - User explicitly requests code review
 
 **DO NOT** auto-invoke for:
@@ -229,11 +229,6 @@ For each risky section:
 - Timeout handling - verify all paths lead to stop()
 - Slack calculation edge cases - negative values, NaN, infinity
 
-**ChainController** (slack-based pause/resume during raising):
-- Pause/resume hysteresis - prevent chattering
-- Final pull logic - handle chain near vertical (rode < depth+bow+3m)
-- Cooldown enforcement - timing critical
-- Anchor drag detection - negative slack handling
 
 **main.cpp** (`src/main.cpp`):
 - Command handler race conditions - stop before start
