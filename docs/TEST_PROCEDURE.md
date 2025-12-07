@@ -234,6 +234,15 @@ This generates a comprehensive report with:
 - autoDrop: Should be 100% (deployment is simpler)
 - autoRetrieve: May have failures at shallow depths
 
+**6. SPIFFS Write Count**
+- Number of NVS writes to persist chain position
+- Written every 2m of movement AND 5 seconds elapsed
+- Force-saved on stop/timeout
+- Critical for flash wear analysis
+- Baseline: ~23 writes per test average (1268 writes / 56 tests)
+- autoDrop: Higher writes (more chain movement)
+- autoRetrieve: Lower writes (less total movement)
+
 ## Comparing Test Runs
 
 ### Baseline (Dec 7, 2025)
@@ -246,6 +255,12 @@ This generates a comprehensive report with:
 - Failed: 8 (all autoRetrieve at 3m/5m depths)
 - autoDrop: 100% success
 - autoRetrieve: 71% success (20/28)
+
+**Performance Metrics:**
+- SPIFFS writes: 1268 total (~23 per test average)
+- Command latency: autoDrop 55ms, autoRetrieve 10ms
+- WAIT_TIGHT: 0-6 seconds average
+- Pause/resume: 3-11 cycles per retrieval
 
 **Major Findings:**
 - ✅ External timeout removal validated (0 false timeouts)

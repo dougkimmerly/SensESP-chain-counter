@@ -171,6 +171,9 @@ void setup() {
 
   ESP_LOGD(__FILE__, "the saved chain length is %f", saved_length );
 
+  /* SPIFFS write counter for diagnostics */
+  static unsigned long spiffs_write_count = 0;
+
   /* Digital inputs */
   auto* di1_input = new DigitalInputChange(di1_gpio, INPUT_PULLDOWN, CHANGE, "/di1/digital_input");
   auto* di1_debounce = new DebounceInt(di1_dtime, "/di1/debounce");
@@ -241,7 +244,7 @@ void setup() {
   });
 
   /* Force save chain length (no thresholds, used on stop/timeout) */
-  auto force_save_chain_length = [accumulator]() {
+  auto force_save_chain_length = [accumulator, &spiffs_write_count]() {
     if(ignore_input) {
       return;
     }
@@ -256,12 +259,13 @@ void setup() {
     if (written == 0) {
       ESP_LOGE(__FILE__, "Failed to write chain position to NVS");
     } else {
-      ESP_LOGD(__FILE__, "Chain position force-saved: %.2fm", current_length);
+      spiffs_write_count++;
+      ESP_LOGD(__FILE__, "Chain position force-saved: %.2fm (SPIFFS writes: %lu)", current_length, spiffs_write_count);
     }
   };
 
   /* Save the chain length function */
-  auto save_chain_length = [accumulator]() {
+  auto save_chain_length = [accumulator, &spiffs_write_count]() {
     static float last_saved_position = 0.0;
     static unsigned long last_save_time = 0;
     static constexpr float SAVE_THRESHOLD_M = 2.0;  // Only save every 2m
@@ -292,9 +296,11 @@ void setup() {
         if (written == 0) {
           ESP_LOGE(__FILE__, "Failed to write chain position to NVS");
         } else {
+          float delta = fabs(current_length - last_saved_position);
           last_saved_position = current_length;
           last_save_time = now;
-          ESP_LOGD(__FILE__, "Chain position saved: %.2fm (delta: %.2fm)", current_length, fabs(current_length - last_saved_position));
+          spiffs_write_count++;
+          ESP_LOGD(__FILE__, "Chain position saved: %.2fm (delta: %.2fm, SPIFFS writes: %lu)", current_length, delta, spiffs_write_count);
         }
     }
   };
