@@ -450,10 +450,18 @@ void ChainController::calculateAndPublishHorizontalSlack() {
 
         float total_depth_from_bow = BOW_HEIGHT_M + current_depth;
 
+        // CRITICAL: Check if anchor is lifted off bottom
+        // If rode deployed < depth + bow height, anchor is hanging in water/at surface
+        // In this case, ALL chain is slack (anchor provides no holding)
+        if (current_chain < total_depth_from_bow) {
+            // Anchor lifted - all deployed chain is slack
+            calculated_slack = current_chain;
+            ESP_LOGD(__FILE__, "Anchor lifted off bottom: rode %.2fm < depth %.2fm - slack = rode",
+                     current_chain, total_depth_from_bow);
+        }
         // If distance is unavailable (0.0), minimum chain is just vertical drop
-        float minimum_chain_needed;
-        if (current_distance <= 0.01) {
-            minimum_chain_needed = total_depth_from_bow;
+        else if (current_distance <= 0.01) {
+            calculated_slack = current_chain - total_depth_from_bow;
         } else {
             // Use catenary-aware calculation to find required chain length
             // Step 1: Estimate horizontal force (same as in computeTargetHorizontalDistance)
@@ -474,17 +482,17 @@ void ChainController::calculateAndPublishHorizontalSlack() {
             // We need chain such that: current_distance = sqrt(chain² - depth²) * reductionFactor
             // Solving: chain = sqrt((current_distance / reductionFactor)² + depth²)
             float adjustedDistance = current_distance / fmax(0.01, reductionFactor); // Prevent divide by zero
-            minimum_chain_needed = sqrt(pow(adjustedDistance, 2) + pow(total_depth_from_bow, 2));
-        }
+            float minimum_chain_needed = sqrt(pow(adjustedDistance, 2) + pow(total_depth_from_bow, 2));
 
-        // Slack is excess chain beyond what's needed
-        // Positive = chain lying on seabed
-        // Negative = anchor has dragged (boat further than chain can reach)
-        calculated_slack = current_chain - minimum_chain_needed;
+            // Slack is excess chain beyond what's needed
+            // Positive = chain lying on seabed
+            // Negative = anchor has dragged (boat further than chain can reach)
+            calculated_slack = current_chain - minimum_chain_needed;
 
-        // Check for NaN/Inf in the final result
-        if (isnan(calculated_slack) || isinf(calculated_slack)) {
-             calculated_slack = 0.0;
+            // Check for NaN/Inf in the final result
+            if (isnan(calculated_slack) || isinf(calculated_slack)) {
+                 calculated_slack = 0.0;
+            }
         }
     }
 
