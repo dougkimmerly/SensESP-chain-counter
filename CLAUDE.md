@@ -63,6 +63,8 @@ Windlass Motor
 | `safety.md` | Hardware limits, timing constraints, failure modes |
 | `domain.md` | SignalK paths, marine physics, catenary math |
 | `patterns.md` | C++/SensESP patterns, coding standards |
+| `sensesp-guide.md` | SensESP framework patterns, GPIO, producers/transforms |
+| `signalk-guide.md` | SignalK API reference, paths, units |
 
 ## Hardware
 
