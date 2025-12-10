@@ -1,0 +1,13 @@
+# Ignore all log files and analysis files from test runs
+*.log
+*.analysis.txt
+summary.txt
+.pass_count
+.fail_count
+
+# Ignore test run directories (timestamped)
+*/
+
+# But keep the structure and documentation
+!.gitignore
+!README.md

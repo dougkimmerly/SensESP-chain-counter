@@ -12,3 +12,8 @@
 *.eep
 *.bin
 /.vscode/
+
+# Logs
+logs/*.log
+logs/*.metadata
+logs/.capture.pid

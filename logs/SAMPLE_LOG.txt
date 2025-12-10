@@ -1,0 +1,150 @@
+==========================================================
+SensESP Chain Counter - Log Capture
+Started: 2024-12-06 14:10:00
+Session: sample-retrieval-test
+Baud: 115200
+==========================================================
+
+[INFO] SensESP starting up...
+[INFO] WiFi connecting to network...
+[INFO] WiFi connected. IP: 192.168.1.100
+[INFO] Signal K server: 192.168.1.50:3000
+[INFO] Initializing ChainController
+[INFO] Setting bow height to 2.0m
+[INFO] Motor initialized on GPIO pins 12/13
+[INFO] Encoder initialized on GPIO pin 14
+[INFO] ChainController ready
+
+[INFO] Signal K client connecting...
+[INFO] Signal K client connected
+[INFO] Subscribing to environment.depth.belowSurface
+[INFO] Subscribing to navigation.anchor.distanceFromBow
+[INFO] Publishing navigation.anchor.rodeDeployed
+[INFO] Publishing navigation.anchor.chainSlack
+[INFO] Publishing navigation.anchor.chainDirection
+
+[INFO] Initial readings:
+[INFO]   Depth: 8.5m
+[INFO]   Distance from bow: 25.3m
+[INFO]   Rode deployed: 32.0m
+[INFO]   Calculated slack: 4.2m (chain length - straight line distance)
+
+[DEBUG] Slack calculation:
+[DEBUG]   chain_length = 32.0m
+[DEBUG]   distance = 25.3m
+[DEBUG]   depth + bow_height = 8.5 + 2.0 = 10.5m
+[DEBUG]   straight_line = sqrt(25.3^2 + 10.5^2) = 27.4m
+[DEBUG]   slack = 32.0 - 27.4 = 4.6m
+
+[INFO] Starting automatic retrieval
+[INFO] RetrievalManager state: CHECKING_SLACK
+[DEBUG] Current slack: 4.6m
+[DEBUG] Pause threshold: 0.2m
+[DEBUG] Slack above threshold, motor can raise
+
+[INFO] RetrievalManager state: RAISING
+[INFO] Motor: UP
+[DEBUG] Raising chain...
+[DEBUG] Rode: 31.5m, Slack: 4.1m
+[DEBUG] Rode: 31.0m, Slack: 3.6m
+[DEBUG] Rode: 30.5m, Slack: 3.1m
+[DEBUG] Rode: 30.0m, Slack: 2.6m
+[DEBUG] Rode: 29.5m, Slack: 2.1m
+[DEBUG] Rode: 29.0m, Slack: 1.6m
+[DEBUG] Rode: 28.5m, Slack: 1.1m
+[DEBUG] Rode: 28.0m, Slack: 0.6m
+[DEBUG] Rode: 27.8m, Slack: 0.4m
+
+[WARN] Slack below pause threshold (0.4m < 0.2m)
+[INFO] Motor: STOP
+[INFO] RetrievalManager state: WAITING_FOR_SLACK
+
+[INFO] Waiting for boat to move and create slack...
+[DEBUG] Distance: 25.3m → 25.5m (boat moving)
+[DEBUG] Slack: 0.4m → 0.6m
+[DEBUG] Distance: 25.5m → 26.0m
+[DEBUG] Slack: 0.6m → 1.2m
+[DEBUG] Distance: 26.0m → 26.8m
+[DEBUG] Slack: 1.2m → 2.1m
+
+[INFO] Slack above resume threshold (2.1m > 30% of depth)
+[INFO] Resume threshold: 2.55m (30% of 8.5m)
+[INFO] RetrievalManager state: RAISING
+
+[INFO] Motor: UP
+[DEBUG] Raising chain...
+[DEBUG] Rode: 27.5m, Slack: 1.8m
+[DEBUG] Rode: 27.0m, Slack: 1.3m
+[DEBUG] Rode: 26.5m, Slack: 0.8m
+[DEBUG] Rode: 26.2m, Slack: 0.5m
+[DEBUG] Rode: 26.0m, Slack: 0.3m
+
+[WARN] Slack below pause threshold (0.3m < 0.2m)
+[INFO] Motor: STOP
+[INFO] RetrievalManager state: WAITING_FOR_SLACK
+
+[INFO] Waiting for boat to move...
+[DEBUG] Distance: 26.8m → 27.5m
+[DEBUG] Slack: 0.3m → 1.2m
+[DEBUG] Distance: 27.5m → 28.0m
+[DEBUG] Slack: 1.2m → 2.0m
+[DEBUG] Distance: 28.0m → 28.5m
+[DEBUG] Slack: 2.0m → 2.8m
+
+[INFO] Slack above resume threshold
+[INFO] RetrievalManager state: RAISING
+[INFO] Motor: UP
+
+[DEBUG] Rode: 25.8m, Slack: 2.5m
+[DEBUG] Rode: 25.0m, Slack: 1.7m
+[DEBUG] Rode: 24.5m, Slack: 1.2m
+[DEBUG] Rode: 24.0m, Slack: 0.7m
+[DEBUG] Rode: 23.8m, Slack: 0.5m
+[DEBUG] Rode: 23.5m, Slack: 0.2m
+
+[INFO] Entering final pull phase
+[DEBUG] Rode (23.5m) <= depth + bow_height + 3m (13.5m)
+[INFO] Skipping slack-based control, pulling continuously
+
+[INFO] Motor: UP (continuous)
+[DEBUG] Rode: 23.0m
+[DEBUG] Rode: 22.5m
+[DEBUG] Rode: 22.0m
+[DEBUG] Rode: 21.5m
+[DEBUG] Rode: 21.0m
+[DEBUG] Rode: 20.5m
+[DEBUG] Rode: 20.0m
+[DEBUG] Rode: 19.5m
+[DEBUG] Rode: 19.0m
+[DEBUG] Rode: 18.5m
+
+[INFO] Anchor should be off bottom
+[DEBUG] Rode: 18.0m
+[DEBUG] Rode: 17.5m
+[DEBUG] Rode: 17.0m
+[DEBUG] Rode: 16.5m
+[DEBUG] Rode: 16.0m
+[DEBUG] Rode: 15.5m
+[DEBUG] Rode: 15.0m
+[DEBUG] Rode: 14.5m
+[DEBUG] Rode: 14.0m
+[DEBUG] Rode: 13.5m
+[DEBUG] Rode: 13.0m
+[DEBUG] Rode: 12.5m
+[DEBUG] Rode: 12.0m
+
+[INFO] Rode at stowed position (12.0m)
+[INFO] Motor: STOP
+[INFO] RetrievalManager state: COMPLETE
+
+[INFO] Automatic retrieval complete
+[INFO] Total retrieval time: 8 minutes 45 seconds
+[INFO] Chain retrieved: 20.0m (from 32.0m to 12.0m)
+
+[INFO] Publishing final states to Signal K:
+[INFO]   navigation.anchor.rodeDeployed = 12.0
+[INFO]   navigation.anchor.chainSlack = 0.0
+[INFO]   navigation.anchor.chainDirection = 0 (stopped)
+[INFO]   navigation.anchor.autoStage = "complete"
+
+[INFO] System ready for next operation

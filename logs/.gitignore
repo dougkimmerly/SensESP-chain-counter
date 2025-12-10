@@ -1,0 +1,9 @@
+# Ignore all log files
+*.log
+
+# Ignore metadata files
+*.metadata
+
+# Keep the directory structure
+!.gitignore
+!README.md

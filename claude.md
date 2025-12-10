@@ -16,7 +16,7 @@ Marine anchor chain deployment/retrieval system on ESP32 with Signal K integrati
 
 ## State Machines
 - **Deployment**: DROP → WAIT_TIGHT → HOLD_DROP → DEPLOY_30 → WAIT_30 → HOLD_30 → DEPLOY_75 → WAIT_75 → HOLD_75 → DEPLOY_100 → COMPLETE
-- **Retrieval**: Simple direct command (autoRetrieve → raiseAnchor with 4x timeout)
+- **Retrieval**: Simple direct command (autoRetrieve → raiseAnchor, no external timeout)
 
 ## Critical Physics
 - **Bow height**: 2m from bow to water surface
