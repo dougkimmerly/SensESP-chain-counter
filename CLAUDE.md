@@ -44,6 +44,36 @@ Windlass Motor
 
 **Core flow**: Command received → Calculate slack → Control relay → Publish state
 
+## Message Queue Protocol
+
+For async PM ↔ CC communication:
+
+| File | Direction | Purpose |
+|------|-----------|---------|
+| `.claude/handoff/task-queue.md` | PM → CC | Tasks to execute |
+| `.claude/handoff/response-queue.md` | CC → PM | Task responses |
+| `.claude/handoff/task-archive.md` | CC | Completed tasks audit trail |
+| `.claude/handoff/response-archive.md` | PM | Archived responses |
+
+**When you see `msg`:**
+1. `git pull`
+2. Read `task-queue.md`
+3. Execute task fully
+4. Write RESPONSE to `response-queue.md` (NOT task-queue!)
+5. Archive task to `task-archive.md` with pickup date
+6. Clear `task-queue.md` (leave header only)
+7. `git add .claude/handoff/ && git commit -m "Handoff: ..." && git push`
+
+⚠️ **CRITICAL:** Responses go to `response-queue.md`, NOT `task-queue.md`!
+
+## PM GitHub Access
+
+| Field | Value |
+|-------|-------|
+| Owner | `dougkimmerly` |
+| Repo | `SensESP-chain-counter` |
+| Branch | `main` |
+
 ## Commands
 
 | Command | When to use |
